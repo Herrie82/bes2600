@@ -472,6 +472,7 @@ static int bes2600_pwr_enter_lp_mode(struct bes2600_common *hw_priv)
 	int i = 0;
 	struct bes2600_vif *priv;
 	int ret = 0;
+	int timeouts = 0;
 	char ip_str[20];
 	unsigned long status = 0;
 
@@ -528,22 +529,35 @@ static int bes2600_pwr_enter_lp_mode(struct bes2600_common *hw_priv)
 				if (ret) {
 					atomic_set(&hw_priv->bes_power.pm_set_in_process, 0);
 					bes_err("%s, set operation mode fail\n", __func__);
+					timeouts++;
+					continue;
 				}
 
 				/* wait power save mode changed indication */
 				status = wait_for_completion_timeout(&hw_priv->bes_power.pm_enter_cmpl, 5 * HZ);
 				atomic_set(&hw_priv->bes_power.pm_set_in_process, 0);
 				reinit_completion(&hw_priv->bes_power.pm_enter_cmpl);
-				if (!status)
+				if (!status) {
 					bes_err("%s, wait pm ind timeout\n", __func__);
+					timeouts++;
+				}
 			} else {
 				bes_devel("skip enter lp mode\n");
 			}
 		}
 	}
 
-	/* set device low power configuration */
-	bes2600_pwr_device_enter_lp_mode(hw_priv);
+	/*
+	 * Enter the device-end of the LP transition only if every per-VIF
+	 * mac80211 handshake reached firmware-ACKed completion. Doing the
+	 * device-LP setup while any VIF is still pending leaves the driver
+	 * in an inconsistent state that cascades into SDIO TX errors on
+	 * the BES2600.
+	 */
+	if (timeouts == 0)
+		bes2600_pwr_device_enter_lp_mode(hw_priv);
+	else
+		ret = -ETIMEDOUT;
 
 	return ret;
 }
