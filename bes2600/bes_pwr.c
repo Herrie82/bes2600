@@ -538,7 +538,7 @@ static int bes2600_pwr_enter_lp_mode(struct bes2600_common *hw_priv)
 				atomic_set(&hw_priv->bes_power.pm_set_in_process, 0);
 				reinit_completion(&hw_priv->bes_power.pm_enter_cmpl);
 				if (!status) {
-					bes_err("%s, wait pm ind timeout\n", __func__);
+					bes_devel("%s, wait pm ind timeout\n", __func__);
 					timeouts++;
 				}
 			} else {
