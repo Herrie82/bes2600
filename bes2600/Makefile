@@ -123,6 +123,9 @@ ccflags-y += $(call bes_probe,$(BES_MAC80211_H),'struct ieee80211_chan_req.*chan
 # v6.3: legacy drivers hand their software queues to mac80211 with this helper.
 ccflags-y += $(call bes_probe,$(BES_MAC80211_H),ieee80211_handle_wake_tx_queue,BES2600_HAVE_HANDLE_WAKE_TX_QUEUE)
 
+# v6.11: non-chanctx drivers must wire up the emulation helpers themselves.
+ccflags-y += $(call bes_probe,$(BES_MAC80211_H),ieee80211_emulate_add_chanctx,BES2600_HAVE_EMULATE_CHANCTX)
+
 # v6.10: ieee80211_tx_status was renamed to ieee80211_tx_status_skb.
 ccflags-y += $(call bes_probe,$(BES_MAC80211_H),ieee80211_tx_status_skb,BES2600_HAVE_TX_STATUS_SKB)
 endif

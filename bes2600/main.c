@@ -269,6 +269,7 @@ static int bes2600_op_set_rts_threshold(struct ieee80211_hw *hw, u32 value)
 #endif
 
 static const struct ieee80211_ops bes2600_ops = {
+	BES2600_EMULATE_CHANCTX_OPS
 	.start			= bes2600_start,
 	.stop			= bes2600_op_stop,
 	.add_interface		= bes2600_add_interface,

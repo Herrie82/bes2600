@@ -42,6 +42,7 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
 #define BES2600_HAVE_STOP_SUSPEND		1
 #define BES2600_HAVE_BSS_CHANREQ		1
+#define BES2600_HAVE_EMULATE_CHANCTX		1
 #endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 0)
 #define BES2600_HAVE_CONFIG_RADIO_IDX		1
@@ -83,6 +84,22 @@
 #define bes2600_bss_chandef(conf)	(&(conf)->chanreq.oper)
 #else
 #define bes2600_bss_chandef(conf)	(&(conf)->chandef)
+#endif
+
+/*
+ * v6.11 removed mac80211's internal channel-context emulation.  Drivers that
+ * do not implement chanctx must now point the four ops at the emulation
+ * helpers themselves; leaving them NULL makes drv_add_chanctx() call through
+ * a NULL pointer.
+ */
+#ifdef BES2600_HAVE_EMULATE_CHANCTX
+#define BES2600_EMULATE_CHANCTX_OPS					\
+	.add_chanctx		= ieee80211_emulate_add_chanctx,	\
+	.remove_chanctx		= ieee80211_emulate_remove_chanctx,	\
+	.change_chanctx		= ieee80211_emulate_change_chanctx,	\
+	.switch_vif_chanctx	= ieee80211_emulate_switch_vif_chanctx,
+#else
+#define BES2600_EMULATE_CHANCTX_OPS
 #endif
 
 /* v6.10 renamed ieee80211_tx_status() to ieee80211_tx_status_skb(). */
