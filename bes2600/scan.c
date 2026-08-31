@@ -1077,6 +1077,9 @@ void bes2600_probe_work(struct work_struct *work)
 	if (!priv) {
 		up(&hw_priv->scan.lock);
 		up(&hw_priv->conf_lock);
+		/* TX was locked by the caller; releasing it was forgotten
+		 * here, which wedged the transmit path for good. */
+		wsm_unlock_tx(hw_priv);
 		return;
 	}
 	wsm = (struct wsm_tx *)frame.skb->data;
