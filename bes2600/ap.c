@@ -66,6 +66,7 @@ int bes2600_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	struct bes2600_vif *priv = cw12xx_get_vif_from_ieee80211(vif);
 	struct bes2600_link_entry *entry;
 	struct sk_buff *skb;
+	struct sk_buff_head rx_list;
 	struct bes2600_common *hw_priv = hw->priv;
 
 #ifdef P2P_MULTIVIF
@@ -91,14 +92,18 @@ int bes2600_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	}
 
 	entry = &priv->link_id_db[sta_priv->link_id - 1];
+	__skb_queue_head_init(&rx_list);
 	spin_lock_bh(&priv->ps_state_lock);
 	if ((sta->uapsd_queues & IEEE80211_WMM_IE_STA_QOSINFO_AC_MASK) ==
 					IEEE80211_WMM_IE_STA_QOSINFO_AC_MASK)
 		priv->sta_asleep_mask |= BIT(sta_priv->link_id);
 	entry->status = BES2600_LINK_HARD;
-	while ((skb = skb_dequeue(&entry->rx_queue)))
-		ieee80211_rx_irqsafe(priv->hw, skb);
+	skb_queue_splice_tail_init(&entry->rx_queue, &rx_list);
 	spin_unlock_bh(&priv->ps_state_lock);
+
+	/* Indicate outside ps_state_lock; nothing here needs it held. */
+	while ((skb = __skb_dequeue(&rx_list)))
+		ieee80211_rx_irqsafe(priv->hw, skb);
 #ifdef AP_AGGREGATE_FW_FIX
 	hw_priv->connected_sta_cnt++;
 	if(hw_priv->connected_sta_cnt>1) {
