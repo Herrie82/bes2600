@@ -196,7 +196,7 @@ static void __bes2600_queue_gc(struct bes2600_queue *queue,
 static void bes2600_queue_gc(struct timer_list *t)
 {
 	LIST_HEAD(list);
-	struct bes2600_queue *queue = from_timer(queue, t, gc);
+	struct bes2600_queue *queue = timer_container_of(queue, t, gc);
 
 	spin_lock_bh(&queue->lock);
 	__bes2600_queue_gc(queue, &list, true);
@@ -363,7 +363,7 @@ void bes2600_queue_deinit(struct bes2600_queue *queue)
 	int i;
 
 	bes2600_queue_clear(queue, CW12XX_ALL_IFS);
-	del_timer_sync(&queue->gc);
+	timer_delete_sync(&queue->gc);
 	INIT_LIST_HEAD(&queue->free_pool);
 	kfree(queue->pool);
 	for (i = 0; i < CW12XX_MAX_VIFS; i++) {

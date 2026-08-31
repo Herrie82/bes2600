@@ -1311,14 +1311,14 @@ void bes2600_bh_dec_pending_count(struct bes2600_common *hw_priv, int idx)
 	}
 
 	if (--hw_priv->wsm_tx_pending[idx] == 0)
-		del_timer_sync(timer);
+		timer_delete_sync(timer);
 	else
 		mod_timer(timer, jiffies + 3 * HZ);
 }
 
 void bes2600_bh_mcu_active_monitor(struct timer_list* t)
 {
-	struct bes2600_common *hw_priv = from_timer(hw_priv, t, mcu_mon_timer);
+	struct bes2600_common *hw_priv = timer_container_of(hw_priv, t, mcu_mon_timer);
 
 	bes_err("link break between mcu and host, hw_buf_used:%d pending:%d\n", 
 				hw_priv->hw_bufs_used, hw_priv->wsm_tx_pending[1]);
@@ -1327,7 +1327,7 @@ void bes2600_bh_mcu_active_monitor(struct timer_list* t)
 
 void bes2600_bh_lmac_active_monitor(struct timer_list* t)
 {
-	struct bes2600_common *hw_priv = from_timer(hw_priv, t, lmac_mon_timer);
+	struct bes2600_common *hw_priv = timer_container_of(hw_priv, t, lmac_mon_timer);
 
 	bes_err("link break between lmac and host, hw_buf_used:%d pending:%d\n", 
 				hw_priv->hw_bufs_used, hw_priv->wsm_tx_pending[0]);
