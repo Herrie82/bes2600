@@ -185,9 +185,15 @@ static inline int bes2600_reg_write_16(u16 addr, u16 val)
 	return bes2600_reg_write(addr, &val, sizeof(val));
 }
 
+/*
+ * NB: these all used to pass sizeof(val) -- the size of the *pointer* -- as
+ * the transfer length.  On a 64-bit host (the PineTab2 runs aarch64) that
+ * asked the bus layer for 8 bytes into a 4-byte object, smashing whatever
+ * followed it on the stack.  It only happened to work on 32-bit builds.
+ */
 static inline int bes2600_reg_read_32(u16 addr, u32 *val)
 {
-	return bes2600_reg_read(addr, val, sizeof(val));
+	return bes2600_reg_read(addr, val, sizeof(*val));
 }
 
 static inline int bes2600_reg_write_32(u16 addr, u32 val)
@@ -213,7 +219,7 @@ static inline int bes2600_ahb_read(u32 addr, void *buf, size_t buf_len)
 
 static inline int bes2600_apb_read_32(u32 addr, u32 *val)
 {
-	return bes2600_apb_read(addr, val, sizeof(val));
+	return bes2600_apb_read(addr, val, sizeof(*val));
 }
 
 static inline int bes2600_apb_write_32(u32 addr, u32 val)
@@ -223,7 +229,7 @@ static inline int bes2600_apb_write_32(u32 addr, u32 val)
 
 static inline int bes2600_ahb_read_32(u32 addr, u32 *val)
 {
-	return bes2600_ahb_read(addr, val, sizeof(val));
+	return bes2600_ahb_read(addr, val, sizeof(*val));
 }
 
 #if defined(BES2600_DETECTION_LOGIC)

@@ -74,7 +74,7 @@ static int __bes2600_reg_write(u16 addr, const void *buf, size_t buf_len, int bu
 
 static inline int __bes2600_reg_read_32(u16 addr, u32 *val)
 {
-	return __bes2600_reg_read(addr, val, sizeof(val), 0);
+	return __bes2600_reg_read(addr, val, sizeof(*val), 0);
 }
 
 static inline int __bes2600_reg_write_32(u16 addr, u32 val)
