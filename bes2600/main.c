@@ -485,7 +485,9 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 	hw->vif_data_size = sizeof(struct bes2600_vif);
 
 	hw->wiphy->bands[NL80211_BAND_2GHZ] = &bes2600_band_2ghz;
+#ifdef CONFIG_BES2600_5GHZ_SUPPORT
 	hw->wiphy->bands[NL80211_BAND_5GHZ] = &bes2600_band_5ghz;
+#endif
 
 	/*
 	 * hw_priv->channel is read all over the driver (rate tables, scan,

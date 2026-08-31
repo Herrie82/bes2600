@@ -6,6 +6,8 @@ CONFIG_BES2600_TESTMODE                 ?= n
 
 CONFIG_BES2600_ENABLE_DEVEL_LOGS        ?= n
 
+CONFIG_BES2600_5GHZ_SUPPORT             ?= y
+
 CONFIG_BES2600_WAPI_SUPPORT             ?= n
 CONFIG_BES2600_STA_DEBUG                ?= y
 CONFIG_BES2600_STATIC_SDD               ?= y
@@ -156,6 +158,7 @@ endif
 # compilation macros setting
 ccflags-y += $(call boolen_flag,CONFIG_BES2600_VENDOR_CMD,y)
 
+ccflags-y += $(call boolen_flag,CONFIG_BES2600_5GHZ_SUPPORT,y)
 ccflags-y += $(call boolen_flag,CONFIG_BES2600_STATIC_SDD,y)
 ccflags-y += $(call boolen_flag,P2P_MULTIVIF,y)
 ccflags-y += $(call boolen_flag,AP_AGGREGATE_FW_FIX,y)
