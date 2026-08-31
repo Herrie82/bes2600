@@ -82,6 +82,56 @@ define value_flag
 $(strip $(if $($(1)),-D$(1)=$($(1))))
 endef
 
+
+# ---------------------------------------------------------------------------
+# Kernel API feature probes
+#
+# The driver is built out-of-tree against anything from v6.1 to v7.x, and
+# distributions freely backport mac80211 changes into their stable trees.
+# Deriving the API shape from LINUX_VERSION_CODE therefore gets it wrong on
+# exactly the kernels people actually run.  Instead, probe the headers we are
+# about to compile against.  Each probe defines a BES2600_HAVE_* macro that
+# bes2600_compat.h consumes; when the headers cannot be found the compat
+# header falls back to version checks.
+#
+# Note: the grep patterns deliberately avoid parentheses -- GNU make counts
+# them inside $(shell ...) and an unbalanced one truncates the call.
+# ---------------------------------------------------------------------------
+BES_MAC80211_H := $(srctree)/include/net/mac80211.h
+BES_TIMER_H    := $(srctree)/include/linux/timer.h
+
+# $(call bes_probe,<file>,<pattern>,<macro>).  Patterns must spell any comma
+# as $(bes_comma) -- make splits $(call) arguments on literal commas.
+bes_comma := ,
+bes_probe = $(if $(shell grep -q $(2) $(1) && echo y),-D$(3))
+
+ifneq ($(wildcard $(BES_MAC80211_H)),)
+ccflags-y += -DBES2600_HAVE_CONFTEST
+
+# v6.11: ieee80211_ops::stop gained a 'bool suspend' argument.
+ccflags-y += $(call bes_probe,$(BES_MAC80211_H),'stop.*hw$(bes_comma) bool suspend',BES2600_HAVE_STOP_SUSPEND)
+
+# v6.18: ieee80211_ops::config / ::set_rts_threshold gained 'int radio_idx'.
+ccflags-y += $(call bes_probe,$(BES_MAC80211_H),'config.*int radio_idx',BES2600_HAVE_CONFIG_RADIO_IDX)
+ccflags-y += $(call bes_probe,$(BES_MAC80211_H),'set_rts_threshold.*int radio_idx',BES2600_HAVE_RTS_RADIO_IDX)
+
+# v6.11: ieee80211_bss_conf::chandef became ::chanreq.oper.
+ccflags-y += $(call bes_probe,$(BES_MAC80211_H),'struct ieee80211_chan_req.*chanreq;',BES2600_HAVE_BSS_CHANREQ)
+
+# v6.3: legacy drivers hand their software queues to mac80211 with this helper.
+ccflags-y += $(call bes_probe,$(BES_MAC80211_H),ieee80211_handle_wake_tx_queue,BES2600_HAVE_HANDLE_WAKE_TX_QUEUE)
+
+# v6.10: ieee80211_tx_status was renamed to ieee80211_tx_status_skb.
+ccflags-y += $(call bes_probe,$(BES_MAC80211_H),ieee80211_tx_status_skb,BES2600_HAVE_TX_STATUS_SKB)
+endif
+
+ifneq ($(wildcard $(BES_TIMER_H)),)
+# v6.2: del_timer_sync -> timer_delete_sync; the old name died in v6.16.
+ccflags-y += $(call bes_probe,$(BES_TIMER_H),timer_delete_sync,BES2600_HAVE_TIMER_DELETE_SYNC)
+# v6.16: from_timer -> timer_container_of.
+ccflags-y += $(call bes_probe,$(BES_TIMER_H),timer_container_of,BES2600_HAVE_TIMER_CONTAINER_OF)
+endif
+
 ccflags-y += -Werror
 
 SDIO_HOST_ADMA_SUPPORT                  ?= y

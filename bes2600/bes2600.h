@@ -46,6 +46,7 @@
 #define IEEE80211_QOS_DATAGRP   0x0080
 #define WSM_KEY_MAX_IDX		20
 
+#include "bes2600_compat.h"
 #include "queue.h"
 #include "wsm.h"
 #include "scan.h"
