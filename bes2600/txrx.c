@@ -1528,6 +1528,20 @@ void bes2600_skb_dtor(struct bes2600_common *hw_priv,
 	struct bes2600_vif *priv =
 		__cw12xx_hwpriv_to_vifpriv(hw_priv, txpriv->if_id);
 
+	if (!skb)
+		return;
+
+	/*
+	 * skb_pull() past the end of the buffer corrupts the skb silently.
+	 * The offset is the WSM header the TX path prepended, so it can never
+	 * legitimately exceed the length -- but a requeue that went wrong has
+	 * been seen to get here, so drop the frame rather than the machine.
+	 */
+	if (WARN_ON(txpriv->offset > skb->len)) {
+		ieee80211_free_txskb(hw_priv->hw, skb);
+		return;
+	}
+
 	skb_pull(skb, txpriv->offset);
 	if (priv && txpriv->rate_id != BES2600_INVALID_RATE_ID) {
 		bes2600_notify_buffered_tx(priv, skb,
