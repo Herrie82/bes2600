@@ -33,6 +33,7 @@
 #include "bes2600_factory.h"
 #include "bes_chardev.h"
 #include "txrx_opt.h"
+#include "bes2600_compat.h"
 
 MODULE_AUTHOR("Dmitry Tarnyagin <dmitry.tarnyagin@stericsson.com>");
 MODULE_DESCRIPTION("Softmac BES2600 common code");
@@ -215,14 +216,59 @@ static const struct ieee80211_iface_combination bes2600_if_comb[] = {
 };
 
 
+
+/*
+ * mac80211 op thunks.  Upstream changed the prototypes of several ops over
+ * the v6.x/v7.x range; the driver-internal helpers keep a single stable
+ * signature and these thunks adapt to whatever the running kernel expects.
+ */
+#ifdef BES2600_HAVE_STOP_SUSPEND
+static void bes2600_op_stop(struct ieee80211_hw *hw, bool suspend)
+{
+	bes2600_stop(hw);
+}
+#else
+static void bes2600_op_stop(struct ieee80211_hw *hw)
+{
+	bes2600_stop(hw);
+}
+#endif
+
+#ifdef BES2600_HAVE_CONFIG_RADIO_IDX
+static int bes2600_op_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
+{
+	return bes2600_config(hw, changed);
+}
+#else
+static int bes2600_op_config(struct ieee80211_hw *hw, u32 changed)
+{
+	return bes2600_config(hw, changed);
+}
+#endif
+
+#ifdef BES2600_HAVE_RTS_RADIO_IDX
+static int bes2600_op_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
+					u32 value)
+{
+	return bes2600_set_rts_threshold(hw, value);
+}
+#else
+static int bes2600_op_set_rts_threshold(struct ieee80211_hw *hw, u32 value)
+{
+	return bes2600_set_rts_threshold(hw, value);
+}
+#endif
+
 static const struct ieee80211_ops bes2600_ops = {
 	.start			= bes2600_start,
-	.stop			= bes2600_stop,
+	.stop			= bes2600_op_stop,
 	.add_interface		= bes2600_add_interface,
 	.remove_interface	= bes2600_remove_interface,
 	.change_interface	= bes2600_change_interface,
 	.tx			= bes2600_tx,
+#ifdef BES2600_HAVE_HANDLE_WAKE_TX_QUEUE
 	.wake_tx_queue		= ieee80211_handle_wake_tx_queue,
+#endif
 	.hw_scan		= bes2600_hw_scan,
 	.cancel_hw_scan         = bes2600_cancel_hw_scan,
 #ifdef ROAM_OFFLOAD
@@ -234,8 +280,8 @@ static const struct ieee80211_ops bes2600_ops = {
 	.sta_add		= bes2600_sta_add,
 	.sta_remove		= bes2600_sta_remove,
 	.set_key		= bes2600_set_key,
-	.set_rts_threshold	= bes2600_set_rts_threshold,
-	.config			= bes2600_config,
+	.set_rts_threshold	= bes2600_op_set_rts_threshold,
+	.config			= bes2600_op_config,
 	.bss_info_changed	= bes2600_bss_info_changed,
 	.prepare_multicast	= bes2600_prepare_multicast,
 	.configure_filter	= bes2600_configure_filter,
