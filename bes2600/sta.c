@@ -398,9 +398,17 @@ void bes2600_remove_interface(struct ieee80211_hw *dev,
 	atomic_set(&priv->enabled, 0);
 	down(&hw_priv->scan.lock);
 	down(&hw_priv->conf_lock);
-	if (!__cw12xx_hwpriv_to_vifpriv(hw_priv, priv->if_id)) {
+	/*
+	 * mac80211 can call us twice for the same interface -- NetworkManager
+	 * creating a P2P_DEVICE alongside a STA is the reproducible case.
+	 * The early return here skipped the atomic_dec() further down, so
+	 * num_vifs crept up on every occurrence until it hit CW12XX_MAX_VIFS
+	 * and bes2600_add_interface() rejected everything from then on.
+	 */
+	if (WARN_ON(!__cw12xx_hwpriv_to_vifpriv(hw_priv, priv->if_id))) {
 		bes_devel(" !!! %s: interface addr %pM already removed\n",
 			     __func__, vif->addr);
+		atomic_dec(&hw_priv->num_vifs);
 	        up(&hw_priv->conf_lock);
 	        up(&hw_priv->scan.lock);
 		return;
