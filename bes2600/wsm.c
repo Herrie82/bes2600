@@ -3097,11 +3097,16 @@ static int wsm_buf_reserve(struct wsm_buf *buf, size_t extra_size)
 	size_t pos = buf->data - buf->begin;
 	size_t size = pos + extra_size;
 
-
-	if (size & (SDIO_BLOCK_SIZE - 1)) {
-		size &= SDIO_BLOCK_SIZE;
-		size += SDIO_BLOCK_SIZE;
-	}
+	/*
+	 * Round up to a whole number of SDIO blocks.  SDIO_BLOCK_SIZE is 528,
+	 * which is *not* a power of two, so the mask tricks that work for
+	 * power-of-two block sizes are wrong here: the old code did
+	 *	size &= SDIO_BLOCK_SIZE; size += SDIO_BLOCK_SIZE;
+	 * which caps the result at 2 * SDIO_BLOCK_SIZE and therefore silently
+	 * *shrinks* the buffer for any request above 1056 bytes -- every
+	 * subsequent WSM_PUT() then wrote past the end of the allocation.
+	 */
+	size = DIV_ROUND_UP(size, SDIO_BLOCK_SIZE) * SDIO_BLOCK_SIZE;
 
 	buf->begin = krealloc(buf->begin, size, GFP_KERNEL | GFP_DMA);
 	if (buf->begin) {
