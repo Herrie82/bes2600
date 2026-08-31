@@ -898,12 +898,25 @@ static void bes2600_bh_parse_data_pkt(struct bes2600_common *hw_priv, struct sk_
 	u8 *data_ptr = (u8 *)&wsm[1];
 	struct ieee80211_hdr *i80211_ptr = (struct ieee80211_hdr *)(data_ptr + 28 /* radio header */);
 	__le16 fctl = *(__le16 *)i80211_ptr;
-	struct bes2600_vif *priv = cw12xx_get_vif_from_ieee80211(hw_priv->vif_list[if_id]);
-	u32 encry_hdr_len = bes2600_bh_get_encry_hdr_len(priv->cipherType);
+	struct bes2600_vif *priv;
+	u32 encry_hdr_len;
 	u32 i80211_len = ieee80211_hdrlen(fctl);
 	u8 *tmp_ptr = (u8 *)i80211_ptr;
-	u16 *eth_type_ptr = (u16 *)(tmp_ptr + i80211_len + encry_hdr_len + ETH_ALEN);
-	u16 eth_type = __be16_to_cpu(*eth_type_ptr);
+	u16 *eth_type_ptr;
+	u16 eth_type;
+
+	/*
+	 * if_id comes straight off the wire and is 4 bits wide, while
+	 * vif_list[] only has CW12XX_MAX_VIFS entries -- the old code indexed
+	 * it unchecked and then dereferenced whatever it found.
+	 */
+	if (if_id >= CW12XX_MAX_VIFS || !hw_priv->vif_list[if_id])
+		return;
+	priv = cw12xx_get_vif_from_ieee80211(hw_priv->vif_list[if_id]);
+
+	encry_hdr_len = bes2600_bh_get_encry_hdr_len(priv->cipherType);
+	eth_type_ptr = (u16 *)(tmp_ptr + i80211_len + encry_hdr_len + ETH_ALEN);
+	eth_type = __be16_to_cpu(*eth_type_ptr);
 
 	bes_devel("Host was waked by data:\nRA:%pM\nETH_TYPE:0x%04x\n", ieee80211_get_DA(i80211_ptr), eth_type);
 
