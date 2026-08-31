@@ -119,6 +119,19 @@ static struct ieee80211_channel bes2600_2ghz_chantable[] = {
 	CHAN2G(14, 2484, 0),
 };
 
+/*
+ * The 5 GHz operating channels, i.e. UNII-1 (36-48), UNII-2A (52-64),
+ * UNII-2C (100-144) and UNII-3 (149-165), plus the legacy Japanese 5.15-5.25
+ * GHz channels.  cfg80211 disables whatever the active regulatory domain does
+ * not permit, so listing the superset here is fine -- but only for channels
+ * that really are in this band.
+ *
+ * Channels 184-216 used to be listed as well.  With the 5000 + 5*n mapping
+ * those land on 5920-6080 MHz, which is the 6 GHz band (NL80211_BAND_6GHZ),
+ * not this one; advertising them under NL80211_BAND_5GHZ described channels
+ * the hardware cannot operate on.  Channel 144 is a real UNII-2C channel and
+ * was simply missing.
+ */
 static struct ieee80211_channel bes2600_5ghz_chantable[] = {
 	CHAN5G(34, 0),		CHAN5G(36, 0),
 	CHAN5G(38, 0),		CHAN5G(40, 0),
@@ -131,14 +144,10 @@ static struct ieee80211_channel bes2600_5ghz_chantable[] = {
 	CHAN5G(116, 0),		CHAN5G(120, 0),
 	CHAN5G(124, 0),		CHAN5G(128, 0),
 	CHAN5G(132, 0),		CHAN5G(136, 0),
-	CHAN5G(140, 0),		CHAN5G(149, 0),
-	CHAN5G(153, 0),		CHAN5G(157, 0),
-	CHAN5G(161, 0),		CHAN5G(165, 0),
-	CHAN5G(184, 0),		CHAN5G(188, 0),
-	CHAN5G(192, 0),		CHAN5G(196, 0),
-	CHAN5G(200, 0),		CHAN5G(204, 0),
-	CHAN5G(208, 0),		CHAN5G(212, 0),
-	CHAN5G(216, 0),
+	CHAN5G(140, 0),		CHAN5G(144, 0),
+	CHAN5G(149, 0),		CHAN5G(153, 0),
+	CHAN5G(157, 0),		CHAN5G(161, 0),
+	CHAN5G(165, 0),
 };
 
 static struct ieee80211_supported_band bes2600_band_2ghz = {
