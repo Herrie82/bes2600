@@ -913,17 +913,21 @@ bool bes2600_queue_stats_is_empty(struct bes2600_queue_stats *stats,
 	bool empty = true;
 
 	spin_lock_bh(&stats->lock);
-	if (link_id_map == (u32)-1)
+	if (link_id_map == (u32)-1) {
 		empty = stats->num_queued[if_id] == 0;
-	else {
-		int i, if_id;
-		for (if_id = 0; if_id < CW12XX_MAX_VIFS; if_id++) {
-			for (i = 0; i < stats->map_capacity; ++i) {
-				if (link_id_map & BIT(i)) {
-					if (stats->link_map_cache[if_id][i]) {
-						empty = false;
-						break;
-					}
+	} else {
+		int i;
+
+		/*
+		 * The inner loop used to declare its own "if_id", shadowing
+		 * the parameter, so this answered for *all* interfaces rather
+		 * than the one the caller asked about.
+		 */
+		for (i = 0; i < stats->map_capacity; ++i) {
+			if (link_id_map & BIT(i)) {
+				if (stats->link_map_cache[if_id][i]) {
+					empty = false;
+					break;
 				}
 			}
 		}
@@ -938,12 +942,12 @@ void bes2600_queue_iterate_pending_packet(struct bes2600_queue *queue,
 {
 	struct bes2600_queue_item *item = NULL;
 
-	if (list_empty(&queue->pending))
-		return;
-
+	/* The BH thread moves items on and off ->pending concurrently. */
+	spin_lock_bh(&queue->lock);
 	list_for_each_entry(item, &queue->pending, head) {
 		iterate_cb(queue->stats->hw_priv, item->skb);
 	}
+	spin_unlock_bh(&queue->lock);
 }
 
 void bes2600_queue_iterate_record_pending_packet(struct bes2600_common	*hw_priv,
