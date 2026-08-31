@@ -701,7 +701,7 @@ struct bes2600_vif *cw12xx_hwpriv_to_vifpriv(struct bes2600_common *hw_priv,
 {
 	struct bes2600_vif *vif;
 
-	if (WARN_ON((-1 == if_id) || (if_id > CW12XX_MAX_VIFS)))
+	if (WARN_ON(if_id < 0 || if_id >= CW12XX_MAX_VIFS))
 		return NULL;
 	/* TODO:COMBO: During scanning frames can be received
 	 * on interface ID 3 */
@@ -723,7 +723,8 @@ static inline
 struct bes2600_vif *__cw12xx_hwpriv_to_vifpriv(struct bes2600_common *hw_priv,
 					      int if_id)
 {
-	WARN_ON((-1 == if_id) || (if_id > CW12XX_MAX_VIFS));
+	if (WARN_ON(if_id < 0 || if_id >= CW12XX_MAX_VIFS))
+		return NULL;
 	/* TODO:COMBO: During scanning frames can be received
 	 * on interface ID 3 */
 	if (!hw_priv->vif_list[if_id]) {

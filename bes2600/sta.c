@@ -308,6 +308,12 @@ int bes2600_add_interface(struct ieee80211_hw *dev,
 	spin_lock(&hw_priv->vif_list_lock);
 	if (atomic_read(&hw_priv->num_vifs) < CW12XX_MAX_VIFS) {
 #ifdef P2P_MULTIVIF
+		/*
+		 * Without the else branch an interface whose address matches
+		 * none of ours left if_id at whatever happened to be in
+		 * drv_priv, and every later vif_list[if_id] access was then
+		 * out of bounds.
+		 */
 		if (!memcmp(vif->addr, hw_priv->addresses[0].addr, ETH_ALEN)) {
 			priv->if_id = 0;
 		} else if (!memcmp(vif->addr, hw_priv->addresses[1].addr,
@@ -316,6 +322,12 @@ int bes2600_add_interface(struct ieee80211_hw *dev,
 		} else if (!memcmp(vif->addr, hw_priv->addresses[2].addr,
 			ETH_ALEN)) {
 			priv->if_id = 1;
+		} else {
+			bes_err("%s: unknown interface address %pM\n",
+				__func__, vif->addr);
+			spin_unlock(&hw_priv->vif_list_lock);
+			up(&hw_priv->conf_lock);
+			return -EINVAL;
 		}
 		bes_devel("%s: if_id %d mac %pM\n",
 				__func__, priv->if_id, vif->addr);
