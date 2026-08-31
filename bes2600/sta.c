@@ -1263,7 +1263,7 @@ void bes2600_flush(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 			if (!priv)
 				continue;
 			if (!(hw_priv->if_id_slot & BIT(priv->if_id)))
-				return;
+				continue;
 			ret |= !bes2600_queue_stats_is_empty(
 				&hw_priv->tx_queue_stats, -1, priv->if_id);
 			hw_bufs_used = hw_priv->hw_bufs_used;
@@ -1276,20 +1276,23 @@ void bes2600_flush(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		return;
 	}
 
-	/* do flush operation */
+	/*
+	 * Every exit below has to reach the matching clear_busy_event();
+	 * returning early from the middle used to leak the power lock and
+	 * keep the chip permanently awake.
+	 */
 	bes2600_pwr_set_busy_event(hw_priv, BES_PWR_LOCK_ON_FLUSH);
 	if (vif) {
 		priv = cw12xx_get_vif_from_ieee80211(vif);
-		if (!(hw_priv->if_id_slot & BIT(priv->if_id)))
-			return;
-		if (!WARN_ON(__bes2600_flush(hw_priv, drop, priv->if_id)))
+		if ((hw_priv->if_id_slot & BIT(priv->if_id)) &&
+		    !WARN_ON(__bes2600_flush(hw_priv, drop, priv->if_id)))
 			wsm_unlock_tx(hw_priv);
 	} else {
 		bes2600_for_each_vif(hw_priv, priv, i) {
 			if (!priv)
 				continue;
 			if (!(hw_priv->if_id_slot & BIT(priv->if_id)))
-				return;
+				continue;
 			if (!WARN_ON(__bes2600_flush(hw_priv, drop, priv->if_id)))
 				wsm_unlock_tx(hw_priv);
 		}

@@ -219,8 +219,10 @@ int bes2600_hw_scan(struct ieee80211_hw *hw,
 
 	frame.skb = ieee80211_probereq_get(hw, priv->vif->addr, NULL, 0,
 		req->ie_len);
-	if (!frame.skb)
+	if (!frame.skb) {
+		bes2600_pwr_clear_busy_event(hw_priv, BES_PWR_LOCK_ON_SCAN);
 		return -ENOMEM;
+	}
 
 	if (req->ie_len)
 		skb_put_data(frame.skb, req->ie, req->ie_len);
@@ -249,6 +251,8 @@ int bes2600_hw_scan(struct ieee80211_hw *hw,
 			up(&hw_priv->conf_lock);
 			up(&hw_priv->scan.lock);
 			dev_kfree_skb(frame.skb);
+			bes2600_pwr_clear_busy_event(hw_priv,
+						     BES_PWR_LOCK_ON_SCAN);
 			return ret;
 		}
 	}
