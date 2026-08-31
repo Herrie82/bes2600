@@ -163,15 +163,19 @@ static int bes_sdio_memcpy_io_helper(struct sdio_func *func, int write, void *da
 #endif
 
 #ifdef SDIO_HOST_ADMA_SUPPORT
-	u8 *pad_buf = (u8 *)kmalloc(func->cur_blksize, GFP_KERNEL);
+	u8 *pad_buf;
+#endif
+
+	/* Validate before dereferencing func -- the padding buffer used to be
+	 * sized from func->cur_blksize above this check. */
+	if (!func || (func->num > 7) || (!data_buf) || (!size))
+		return -EINVAL;
+
+#ifdef SDIO_HOST_ADMA_SUPPORT
+	pad_buf = kmalloc(func->cur_blksize, GFP_KERNEL);
 	if (!pad_buf)
 		return -ENOMEM;
 #endif
-
-	if (!func || (func->num > 7) || (!data_buf) || (!size)) {
-		ret = -EINVAL;
-		goto out;
-	}
 
 #ifdef BES_SDIO_RXTX_TOGGLE
 	self = sdio_get_drvdata(func);
@@ -1197,14 +1201,15 @@ static int bes2600_sdio_pipe_send(struct sbus_priv *self, u8 pipe, u32 len, u8 *
 		return 0;
 	}
 
+	if (!buf || !len)
+		return -EINVAL;
+
 	desc = kmem_cache_alloc(self->tx_bufferlistpool, GFP_KERNEL);
 	if (!desc)
 		return -ENOMEM;
 	INIT_LIST_HEAD(&desc->node);
 	desc->buf = buf;
 	desc->len = len;
-	if (!buf || !len)
-		return -EINVAL;
 
 	spin_lock(&self->tx_bufferlock);
 	list_add_tail(&desc->node, &self->tx_bufferlist);
