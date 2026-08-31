@@ -943,7 +943,7 @@ err:
 
 int bes2600_wifi_stop(struct bes2600_common *hw_priv)
 {
-	int ret;
+	int ret = 0;
 	unsigned long status = 0;
 
 	status = wait_event_timeout(hw_priv->bh_evt_wq, (!hw_priv->hw_bufs_used), 3 * HZ);
