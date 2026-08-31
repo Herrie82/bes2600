@@ -1496,9 +1496,10 @@ void bes2600_event_handler(struct work_struct *work)
 				cw12xx_unmap_link(priv, link_id);
 
 				skb = dev_alloc_skb(sizeof(struct ieee80211_mgmt) + 64);
+				if (!skb)
+					break;
 				skb_reserve(skb, 64);
 				deauth = (struct ieee80211_mgmt *)skb_put(skb, sizeof(struct ieee80211_mgmt));
-				WARN_ON(!deauth);
 				entry = &priv->link_id_db[link_id - 1];
 				deauth->duration = 0;
 				memcpy(deauth->da, priv->vif->addr, ETH_ALEN);
