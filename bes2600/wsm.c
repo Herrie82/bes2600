@@ -1098,7 +1098,7 @@ int wsm_epta_cmd(struct bes2600_common *hw_priv, struct wsm_epta_msg *arg)
 	else if (coex_is_fdd_mode())
 		arg->hw_epta_enable |= (1 << 10); //LMAC_COEX_MODE_FDD
 
-	if (arg->hw_epta_enable != 3 || arg->hw_epta_enable != 4) { //use for wifi connect
+	if (arg->hw_epta_enable != 3 && arg->hw_epta_enable != 4) { //use for wifi connect
 		///TODO: remove this hack. use hardware in disconnect mode
 		if (coex_is_wifi_inactive()) {
 			arg->wlan_duration = 20000;
