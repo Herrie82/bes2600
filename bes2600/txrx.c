@@ -87,7 +87,7 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
         }
 }
 
-static void tx_policy_build(const struct bes2600_common *hw_priv,
+static int tx_policy_build(const struct bes2600_common *hw_priv,
 	/* [out] */ struct tx_policy *policy,
 	struct ieee80211_tx_rate *rates, size_t count)
 {
@@ -95,9 +95,20 @@ static void tx_policy_build(const struct bes2600_common *hw_priv,
 	unsigned limit = hw_priv->short_frame_max_tx_count;
 	unsigned total = 0;
 	static int tx_rate_idx;
+	const struct ieee80211_rate *first_rate;
 
-	BUG_ON(rates[0].idx < 0);
 	memset(policy, 0, sizeof(*policy));
+
+	/*
+	 * mac80211 hands us rates[0].idx == -1 for frames it does not want
+	 * rate-controlled (and bes2600_get_tx_rate() also refuses indices
+	 * outside the current band's table).  This used to be a BUG_ON()
+	 * followed by an unchecked dereference, i.e. a kernel panic on a
+	 * perfectly legal input.
+	 */
+	first_rate = bes2600_get_tx_rate(hw_priv, &rates[0]);
+	if (!first_rate)
+		return -EINVAL;
 
 	/*
 	 * Calculate the count of rate list.
@@ -228,7 +239,7 @@ static void tx_policy_build(const struct bes2600_common *hw_priv,
 		}
 	}
 
-	policy->defined = bes2600_get_tx_rate(hw_priv, &rates[0])->hw_value + 1;
+	policy->defined = first_rate->hw_value + 1;
 #if 1 //add min basic rate in the tx path, driver should set wifi_Hook_cfg->new_run_flag |= RETRY_1M_RATE;
 	if (rates[0].flags & IEEE80211_TX_RC_MCS) {
 		int low_rate_idx = 0;  /* set default 11b 1M */
@@ -261,8 +272,12 @@ static void tx_policy_build(const struct bes2600_common *hw_priv,
 
 	for (i = 0; i < count; ++i) {
 		register unsigned rateid, off, shift, retries;
+		const struct ieee80211_rate *rate =
+			bes2600_get_tx_rate(hw_priv, &rates[i]);
 
-		rateid = bes2600_get_tx_rate(hw_priv, &rates[i])->hw_value;
+		if (!rate)
+			continue;
+		rateid = rate->hw_value;
 		off = rateid >> 3;		/* eq. rateid / 8 */
 		shift = (rateid & 0x07) << 2;	/* eq. (rateid % 8) * 4 */
 
@@ -285,6 +300,8 @@ static void tx_policy_build(const struct bes2600_common *hw_priv,
 			    rates[3].idx, rates[3].count,
 			    rates[4].idx, rates[4].count);
 	}
+
+	return 0;
 }
 
 static inline bool tx_policy_is_equal(const struct tx_policy *wanted,
@@ -368,7 +385,8 @@ static int tx_policy_get(struct bes2600_common *hw_priv,
 	struct tx_policy_cache *cache = &hw_priv->tx_policy_cache;
 	struct tx_policy wanted;
 
-	tx_policy_build(hw_priv, &wanted, rates, count);
+	if (tx_policy_build(hw_priv, &wanted, rates, count))
+		return BES2600_INVALID_RATE_ID;
 
 	spin_lock_bh(&cache->lock);
 	if (WARN_ON_ONCE(list_empty(&cache->free))) {
@@ -501,12 +519,25 @@ struct bes2600_txinfo {
 u32 bes2600_rate_mask_to_wsm(struct bes2600_common *hw_priv, u32 rates)
 {
 	u32 ret = 0;
+	struct ieee80211_supported_band *sband;
 	int i;
-	struct ieee80211_rate * bitrates =
-		hw_priv->hw->wiphy->bands[hw_priv->channel->band]->bitrates;
-	for (i = 0; i < 32; ++i) {
+
+	/*
+	 * hw_priv->channel is only assigned once mac80211 has told us about a
+	 * channel, and the per-band bitrate tables are shorter than 32 entries
+	 * (12 on 2.4 GHz, 8 on 5 GHz).  Both used to be assumed away, which
+	 * read off the end of bes2600_rates[] on the 5 GHz band.
+	 */
+	if (!hw_priv->channel)
+		return 0;
+
+	sband = hw_priv->hw->wiphy->bands[hw_priv->channel->band];
+	if (!sband)
+		return 0;
+
+	for (i = 0; i < sband->n_bitrates && i < 32; ++i) {
 		if (rates & BIT(i))
-			ret |= BIT(bitrates[i].hw_value);
+			ret |= BIT(sband->bitrates[i].hw_value);
 	}
 	return ret;
 }
@@ -515,12 +546,21 @@ static const struct ieee80211_rate *
 bes2600_get_tx_rate(const struct bes2600_common *hw_priv,
 		   const struct ieee80211_tx_rate *rate)
 {
+	struct ieee80211_supported_band *sband;
+
 	if (rate->idx < 0)
 		return NULL;
-	if (rate->flags & IEEE80211_TX_RC_MCS)
+	if (rate->flags & IEEE80211_TX_RC_MCS) {
+		if (rate->idx >= hw_priv->n_mcs_rates)
+			return NULL;
 		return &hw_priv->mcs_rates[rate->idx];
-	return &hw_priv->hw->wiphy->bands[hw_priv->channel->band]->
-		bitrates[rate->idx];
+	}
+	if (!hw_priv->channel)
+		return NULL;
+	sband = hw_priv->hw->wiphy->bands[hw_priv->channel->band];
+	if (!sband || rate->idx >= sband->n_bitrates)
+		return NULL;
+	return &sband->bitrates[rate->idx];
 }
 
 static int
@@ -865,7 +905,9 @@ bes2600_tx_h_rate_policy(struct bes2600_common *hw_priv,
 	wsm->flags |= t->txpriv.rate_id << 4;
 
 	t->rate = bes2600_get_tx_rate(hw_priv,
-		&t->tx_info->control.rates[0]),
+		&t->tx_info->control.rates[0]);
+	if (!t->rate)
+		return -EFAULT;
 	wsm->maxTxRate = t->rate->hw_value;
 	priv->hw_value = wsm->maxTxRate;
 	if (t->rate->flags & IEEE80211_TX_RC_MCS) {

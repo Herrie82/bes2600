@@ -346,6 +346,8 @@ struct bes2600_common {
 	const struct firmware		*sdd;
 	struct ieee80211_rate		*rates;
 	struct ieee80211_rate		*mcs_rates;
+	/* Number of entries in mcs_rates (MCS0..MCS7 for this 1x1 device). */
+	size_t				n_mcs_rates;
 	u8 mac_addr[ETH_ALEN];
 	/*TODO:COMBO: To be made per VIFF after mac80211 support */
 	struct ieee80211_channel	*channel;

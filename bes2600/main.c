@@ -395,6 +395,7 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 	hw_priv->hw = hw;
 	hw_priv->rates = bes2600_rates; /* TODO: fetch from FW */
 	hw_priv->mcs_rates = bes2600_n_rates;
+	hw_priv->n_mcs_rates = bes2600_n_rates_size;
 #ifdef ROAM_OFFLOAD
 	hw_priv->auto_scanning = 0;
 	hw_priv->frame_rcvd = 0;
