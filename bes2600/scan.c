@@ -883,7 +883,7 @@ static void bes2600_scan_complete(struct bes2600_common *hw_priv, int if_id)
 				  "complete.\n");
 			bes2600_scan_restart_delayed(priv);
 		} else {
-			wiphy_dbg(priv->hw->wiphy, "[SCAN] Direct probe "
+			wiphy_dbg(hw_priv->hw->wiphy, "[SCAN] Direct probe "
 				  "complete without interface!\n");
 		}
 		up(&hw_priv->conf_lock);
