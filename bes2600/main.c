@@ -475,7 +475,12 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 	hw->queues = 4;
 	hw_priv->noise = -94;
 
-	hw->max_rates = 8;
+	/*
+	 * struct ieee80211_tx_info carries exactly IEEE80211_TX_MAX_RATES
+	 * rate stages; advertising more than that is out of spec and makes
+	 * the rate control fill in rates the driver then reads past.
+	 */
+	hw->max_rates = IEEE80211_TX_MAX_RATES;
 	hw->max_rate_tries = 15;
 	hw->extra_tx_headroom = WSM_TX_EXTRA_HEADROOM +
 		8  /* TKIP IV */ +
