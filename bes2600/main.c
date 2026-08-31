@@ -511,6 +511,10 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 	spin_lock_init(&hw_priv->tsm_lock);
 #endif /*CONFIG_BES2600_TESTMODE*/
 	hw_priv->workqueue = create_singlethread_workqueue("bes2600_wq");
+	if (!hw_priv->workqueue) {
+		ieee80211_free_hw(hw);
+		return NULL;
+	}
 	sema_init(&hw_priv->scan.lock, 1);
 	INIT_WORK(&hw_priv->scan.work, bes2600_scan_work);
 #ifdef ROAM_OFFLOAD
@@ -538,6 +542,7 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 			WLAN_LINK_ID_MAX,
 			bes2600_skb_dtor,
 			hw_priv))) {
+		destroy_workqueue(hw_priv->workqueue);
 		ieee80211_free_hw(hw);
 		return NULL;
 	}
@@ -549,6 +554,7 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 			for (; i > 0; i--)
 				bes2600_queue_deinit(&hw_priv->tx_queue[i - 1]);
 			bes2600_queue_stats_deinit(&hw_priv->tx_queue_stats);
+			destroy_workqueue(hw_priv->workqueue);
 			ieee80211_free_hw(hw);
 			return NULL;
 		}
@@ -612,9 +618,43 @@ static int bes2600_register_common(struct ieee80211_hw *dev)
 	return 0;
 }
 
+/*
+ * Undo bes2600_init_common().  Split out of bes2600_unregister_common() so
+ * that the bes2600_core_probe() error paths can use it too -- they used to
+ * jump straight to bes2600_free_common(), leaking the workqueue, the four TX
+ * queues, the queue statistics and the WSM command buffer on every failed
+ * probe.
+ */
+static void bes2600_deinit_common(struct ieee80211_hw *dev)
+{
+	struct bes2600_common *hw_priv = dev->priv;
+	int i;
+
+	timer_delete_sync(&hw_priv->ba_timer);
+	timer_delete_sync(&hw_priv->mcu_mon_timer);
+	timer_delete_sync(&hw_priv->lmac_mon_timer);
+
+	if (hw_priv->workqueue) {
+		destroy_workqueue(hw_priv->workqueue);
+		hw_priv->workqueue = NULL;
+	}
+
+	wsm_buf_deinit(&hw_priv->wsm_cmd_buf);
+
+	if (hw_priv->skb_cache) {
+		dev_kfree_skb(hw_priv->skb_cache);
+		hw_priv->skb_cache = NULL;
+	}
+
+	for (i = 0; i < 4; ++i)
+		bes2600_queue_deinit(&hw_priv->tx_queue[i]);
+	bes2600_queue_stats_deinit(&hw_priv->tx_queue_stats);
+
+	bes2600_pwr_exit(hw_priv);
+}
+
 static void bes2600_free_common(struct ieee80211_hw *dev)
 {
-	/* struct bes2600_common *hw_priv = dev->priv; */
 #ifdef CONFIG_BES2600_TESTMODE
 	struct bes2600_common *hw_priv = dev->priv;
 	if (hw_priv->test_frame.data) {
@@ -623,8 +663,6 @@ static void bes2600_free_common(struct ieee80211_hw *dev)
 		hw_priv->test_frame.len = 0;
 	}
 #endif /* CONFIG_BES2600_TESTMODE */
-
-	/* unsigned int i; */
 
 	ieee80211_free_hw(dev);
 }
@@ -636,8 +674,6 @@ static void bes2600_unregister_common(struct ieee80211_hw *dev)
 
 	ieee80211_unregister_hw(dev);
 
-	timer_delete_sync(&hw_priv->ba_timer);
-
 	hw_priv->sbus_ops->irq_unsubscribe(hw_priv->sbus_priv);
 	bes2600_unregister_bh(hw_priv);
 
@@ -646,22 +682,12 @@ static void bes2600_unregister_common(struct ieee80211_hw *dev)
 	bes2600_unregister_pm_notifier(hw_priv);
 #endif /* CONFIG_PM */
 
-	wsm_buf_deinit(&hw_priv->wsm_cmd_buf);
-	destroy_workqueue(hw_priv->workqueue);
-	hw_priv->workqueue = NULL;
-	if (hw_priv->skb_cache) {
-		dev_kfree_skb(hw_priv->skb_cache);
-		hw_priv->skb_cache = NULL;
-	}
 	if (hw_priv->sdd) {
 #ifndef CONFIG_BES2600_STATIC_SDD
 		release_firmware(hw_priv->sdd);
 #endif
 		hw_priv->sdd = NULL;
 	}
-	for (i = 0; i < 4; ++i)
-		bes2600_queue_deinit(&hw_priv->tx_queue[i]);
-	bes2600_queue_stats_deinit(&hw_priv->tx_queue_stats);
 	/*
 	 * vif_list[] holds struct ieee80211_vif pointers owned by mac80211,
 	 * never by us -- the kfree() that used to be here corrupted the
@@ -672,7 +698,7 @@ static void bes2600_unregister_common(struct ieee80211_hw *dev)
 	for (i = 0; i < CW12XX_MAX_VIFS; i++)
 		hw_priv->vif_list[i] = NULL;
 
-	bes2600_pwr_exit(hw_priv);
+	bes2600_deinit_common(dev);
 }
 
 #if 0
@@ -825,6 +851,7 @@ err3:
 err2:
 	bes2600_unregister_bh(hw_priv);
 err1:
+	bes2600_deinit_common(dev);
 	bes2600_free_common(dev);
 err:
 	*pself = NULL;
