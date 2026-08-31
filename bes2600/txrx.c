@@ -58,8 +58,12 @@ static void tx_policy_dump(struct tx_policy *policy)
 }
 
 static void bes2600_check_go_neg_conf_success(struct bes2600_common *hw_priv,
-						u8 *action)
+						u8 *action, size_t len)
 {
+	/* Highest index touched below is action[17]. */
+	if (len < 18)
+		return;
+
 	if (action[2] == 0x50 && action[3] == 0x6F && action[4] == 0x9A &&
 		action[5] == 0x09 && action[6] == 0x02) {
 		if(action[17] == 0) {
@@ -72,8 +76,11 @@ static void bes2600_check_go_neg_conf_success(struct bes2600_common *hw_priv,
 }
 
 static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
-                                                u8 *action)
+					u8 *action, size_t len)
 {
+	if (len < 7)
+		return;
+
 	if (action[2] == 0x50 && action[3] == 0x6F && action[4] == 0x9A &&
                 action[5] == 0x09 && action[6] == 0x07) {
                         hw_priv->is_go_thru_go_neg = false;
@@ -1094,10 +1101,15 @@ void bes2600_tx(struct ieee80211_hw *dev,
 #endif /*CONFIG_BES2600_TESTMODE*/
 
 	if ((ieee80211_is_action(frame->frame_control))
+			&& (skb->len >= offsetof(struct ieee80211_mgmt,
+						 u.action.category) + 1)
 			&& (mgmt->u.action.category == WLAN_CATEGORY_PUBLIC)) {
 		u8 *action = (u8*)&mgmt->u.action.category;
-		bes2600_check_go_neg_conf_success(hw_priv, action);
-		bes2600_check_prov_desc_req(hw_priv, action);
+		size_t action_len = skb->len -
+			offsetof(struct ieee80211_mgmt, u.action.category);
+
+		bes2600_check_go_neg_conf_success(hw_priv, action, action_len);
+		bes2600_check_prov_desc_req(hw_priv, action, action_len);
 	}
 
 	t.txpriv.if_id = priv->if_id;
@@ -1606,10 +1618,20 @@ void bes2600_rx_cb(struct bes2600_vif *priv,
 	 			hw_priv, BES_PWR_LOCK_ON_RX, BES_PWR_EVENT_RX_TIMEOUT);
 	}
 
+	/*
+	 * Received frames are attacker-controlled: validate the length before
+	 * touching the action body.  The old code read action[2..17]
+	 * unconditionally, i.e. off the end of any short public action frame.
+	 */
 	if ((ieee80211_is_action(frame->frame_control))
-                        && (mgmt->u.action.category == WLAN_CATEGORY_PUBLIC)) {
+			&& (skb->len >= offsetof(struct ieee80211_mgmt,
+						 u.action.category) + 1)
+			&& (mgmt->u.action.category == WLAN_CATEGORY_PUBLIC)) {
 		u8 *action = (u8*)&mgmt->u.action.category;
-		bes2600_check_go_neg_conf_success(hw_priv, action);
+		size_t action_len = skb->len -
+			offsetof(struct ieee80211_mgmt, u.action.category);
+
+		bes2600_check_go_neg_conf_success(hw_priv, action, action_len);
 	}
 
 #ifdef CONFIG_BES2600_TESTMODE
