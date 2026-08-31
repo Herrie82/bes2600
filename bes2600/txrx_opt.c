@@ -479,18 +479,28 @@ static int bes2600_set_txrx_opt_default_param(struct bes2600_common * hw_priv)
 	bes2600_update_pwr_table(hw_priv, priv, cur_pwr_tbl);	// use standard pwr table
 
 	if (priv->join_status == BES2600_JOIN_STATUS_STA) {
+		enum nl80211_chan_width width =
+			bes2600_bss_chandef(&priv->vif->bss_conf)->width;
+		bool short_gi = false;
+
+		/*
+		 * ieee80211_find_sta() needs the RCU read lock held for as
+		 * long as the returned pointer is used, and it returns NULL
+		 * whenever the peer is already gone -- neither was honoured
+		 * here, so this was both an RCU violation and a NULL deref.
+		 */
+		rcu_read_lock();
 		sta = ieee80211_find_sta(priv->vif, priv->vif->bss_conf.bssid);
-		if (sta->deflink.ht_cap.ht_supported &&
-		    ((bes2600_bss_chandef(&priv->vif->bss_conf)->width == NL80211_CHAN_WIDTH_20 &&
-			 sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SGI_20) ||
-			(bes2600_bss_chandef(&priv->vif->bss_conf)->width == NL80211_CHAN_WIDTH_40 &&
-			 sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SGI_40))) {
-			bes_devel( "open short gi tx\n");
-			bes2600_enable_tx_shortgi(hw_priv, priv, 1);
-		} else {
-			bes_devel( "close short gi tx\n");
-			bes2600_enable_tx_shortgi(hw_priv, priv, 0);
-		}
+		if (sta && sta->deflink.ht_cap.ht_supported &&
+		    ((width == NL80211_CHAN_WIDTH_20 &&
+		      sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SGI_20) ||
+		     (width == NL80211_CHAN_WIDTH_40 &&
+		      sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SGI_40)))
+			short_gi = true;
+		rcu_read_unlock();
+
+		bes_devel("%s short gi tx\n", short_gi ? "open" : "close");
+		bes2600_enable_tx_shortgi(hw_priv, priv, short_gi ? 1 : 0);
 	}
 
 	return 0;
