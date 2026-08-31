@@ -562,10 +562,19 @@ int bes2600_config(struct ieee80211_hw *dev, u32 changed)
 	/* TODO: IEEE80211_CONF_CHANGE_QOS */
 	/* TODO:COMBO:Change when support is available mac80211*/
 	if (changed & IEEE80211_CONF_CHANGE_POWER) {
-		/*hw_priv->output_power = conf->power_level;*/
-		bes_devel("Output power ++%d\n",conf->power_level);
-		hw_priv->output_power = 20;
-		bes_devel("Output power --%d\n",hw_priv->output_power);
+		/*
+		 * conf->power_level is already clamped by mac80211 to what the
+		 * regulatory domain permits on the current channel.  Pinning
+		 * it at 20 dBm ignored that -- too high for most 5 GHz and DFS
+		 * channels (a regulatory violation, and rejected outright by
+		 * some firmware builds) and needlessly high for close-range
+		 * 2.4 GHz links.
+		 */
+		hw_priv->output_power = conf->power_level;
+		if (hw_priv->output_power <= 0)
+			hw_priv->output_power = 20;
+		bes_devel("Output power %d (requested %d)\n",
+			  hw_priv->output_power, conf->power_level);
 #ifdef CONFIG_BES2600_TESTMODE
 		/* Testing if Power Level to set is out of device power range */
 		if (conf->chandef.chan->band == NL80211_BAND_2GHZ) {
