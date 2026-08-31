@@ -367,24 +367,30 @@ static int bes2600_op_wifi_bt_on_off(const char *str)
 		WARN_ON(status <= 0);
 	}
 
+	/*
+	 * Parse before taking status_lock: bes2600_get_cmd_and_ifname() does
+	 * GFP_KERNEL allocations, which may sleep and must not happen inside
+	 * a spinlock.
+	 */
+	if (bes2600_get_cmd_and_ifname(str, info) != 0)
+		return -EINVAL;
+
 	/* if dpd calibration is doing, modify wifi and bt state directly */
 	spin_lock(&bes2600_cdev.status_lock);
 	if (bes2600_cdev.bus_probe == BES2600_BUS_PROBE_OK && !bes2600_cdev.dpd_calied) {
-		if (bes2600_get_cmd_and_ifname(str, info) == 0) {
-			if (strncmp(info[1], "WIFI_ON", 7) == 0) {
-				bes2600_cdev.wifi_opened = true;
-			} else if (strncmp(info[1], "WIFI_OFF", 8) == 0) {
-				bes2600_cdev.wifi_opened = false;
-			} else if (strncmp(info[1], "BT_ON", 5) == 0) {
-				bes2600_cdev.bt_opened = true;
-				bes2600_cdev.bton_pending = true;
-			} else if (strncmp(info[1], "BT_OFF", 6) == 0) {
-				bes2600_cdev.bt_opened = false;
-				bes2600_cdev.bton_pending = false;
-			}
+		if (strncmp(info[1], "WIFI_ON", 7) == 0) {
+			bes2600_cdev.wifi_opened = true;
+		} else if (strncmp(info[1], "WIFI_OFF", 8) == 0) {
+			bes2600_cdev.wifi_opened = false;
+		} else if (strncmp(info[1], "BT_ON", 5) == 0) {
+			bes2600_cdev.bt_opened = true;
+			bes2600_cdev.bton_pending = true;
+		} else if (strncmp(info[1], "BT_OFF", 6) == 0) {
+			bes2600_cdev.bt_opened = false;
+			bes2600_cdev.bton_pending = false;
 		}
-		bes2600_recyle_cmd_and_ifname_mem(info);
 		spin_unlock(&bes2600_cdev.status_lock);
+		bes2600_recyle_cmd_and_ifname_mem(info);
 
 		/* wait probe done event */
 		status = wait_event_timeout(bes2600_cdev.probe_done_wq,
@@ -396,16 +402,14 @@ static int bes2600_op_wifi_bt_on_off(const char *str)
 	spin_unlock(&bes2600_cdev.status_lock);
 
 	/* process wifi/bt on/off operation */
-	if (bes2600_get_cmd_and_ifname(str, info) == 0) {
-		if (strncmp(info[1], "WIFI_ON", 7) == 0) {
-			ret = bes2600_switch_wifi(1);
-		} else if (strncmp(info[1], "WIFI_OFF", 8) == 0) {
-			ret = bes2600_switch_wifi(0);
-		} else if (strncmp(info[1], "BT_ON", 5) == 0) {
-			ret = bes2600_switch_bt(1);
-		} else if (strncmp(info[1], "BT_OFF", 6) == 0) {
-			ret = bes2600_switch_bt(0);
-		}
+	if (strncmp(info[1], "WIFI_ON", 7) == 0) {
+		ret = bes2600_switch_wifi(1);
+	} else if (strncmp(info[1], "WIFI_OFF", 8) == 0) {
+		ret = bes2600_switch_wifi(0);
+	} else if (strncmp(info[1], "BT_ON", 5) == 0) {
+		ret = bes2600_switch_bt(1);
+	} else if (strncmp(info[1], "BT_OFF", 6) == 0) {
+		ret = bes2600_switch_bt(0);
 	}
 
 	if (!ret && bes2600_chrdev_check_system_close())
