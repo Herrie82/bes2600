@@ -2165,6 +2165,10 @@ void bes2600_join_work(struct work_struct *work)
 	const u8 *ssidie;
 	const u8 *dtimie;
 	const struct ieee80211_tim_ie *tim = NULL;
+	u8 bss_ssid[IEEE80211_MAX_SSID_LEN];
+	u8 bss_ssid_len = 0;
+	bool bss_have_ssid = false;
+	u8 bss_dtim_period = 0;
 	struct wsm_protected_mgmt_policy mgmt_policy;
 	struct ieee80211_conf *conf = &hw_priv->hw->conf;
 	struct wsm_template_frame probe_tmp = {
@@ -2211,10 +2215,27 @@ void bes2600_join_work(struct work_struct *work)
 		wsm_unlock_tx(hw_priv);
 		return;
 	}
+	/*
+	 * ieee80211_bss_get_ie() returns an RCU-protected pointer into
+	 * bss->ies, so it may only be dereferenced under rcu_read_lock().
+	 * Copy out what we need rather than holding the lock across the join
+	 * below, which sleeps on conf_lock.
+	 */
+	rcu_read_lock();
 	ssidie = ieee80211_bss_get_ie(bss, WLAN_EID_SSID);
+	if (ssidie) {
+		bss_ssid_len = min_t(u8, ssidie[1], sizeof(bss_ssid));
+		if (WARN_ON(ssidie[1] > sizeof(bss_ssid)))
+			bss_ssid_len = sizeof(bss_ssid);
+		memcpy(bss_ssid, &ssidie[2], bss_ssid_len);
+		bss_have_ssid = true;
+	}
 	dtimie = ieee80211_bss_get_ie(bss, WLAN_EID_TIM);
-	if (dtimie)
-		tim = (struct ieee80211_tim_ie *)&dtimie[2];
+	if (dtimie) {
+		tim = (const struct ieee80211_tim_ie *)&dtimie[2];
+		bss_dtim_period = tim->dtim_period;
+	}
+	rcu_read_unlock();
 
 	down(&hw_priv->conf_lock);
 	{
@@ -2247,9 +2268,9 @@ void bes2600_join_work(struct work_struct *work)
 					bss->beacon_interval + 1);
 		}
 
-		if (tim && tim->dtim_period > 1) {
-			join.dtimPeriod = tim->dtim_period;
-			priv->join_dtim_period = tim->dtim_period;
+		if (bss_dtim_period > 1) {
+			join.dtimPeriod = bss_dtim_period;
+			priv->join_dtim_period = bss_dtim_period;
 		}
 		priv->beacon_int = bss->beacon_interval;
 		bes_devel("[STA] Join DTIM: %d, interval: %d\n",
@@ -2270,12 +2291,11 @@ void bes2600_join_work(struct work_struct *work)
 		memcpy(&join.bssid[0], bssid, sizeof(join.bssid));
 		memcpy(&priv->join_bssid[0], bssid, sizeof(priv->join_bssid));
 
-		if (ssidie) {
-			join.ssidLength = ssidie[1];
-			if (WARN_ON(join.ssidLength > sizeof(join.ssid)))
-				join.ssidLength = sizeof(join.ssid);
-			memcpy(&join.ssid[0], &ssidie[2], join.ssidLength);
-			if(strstr(&join.ssid[0],"5.1.4"))
+		if (bss_have_ssid) {
+			join.ssidLength = min_t(u32, bss_ssid_len,
+						sizeof(join.ssid));
+			memcpy(&join.ssid[0], bss_ssid, join.ssidLength);
+			if(strnstr(&join.ssid[0], "5.1.4", join.ssidLength))
 				msleep(200);
 #ifdef ROAM_OFFLOAD
 			if((priv->vif->type == NL80211_IFTYPE_STATION)) {
