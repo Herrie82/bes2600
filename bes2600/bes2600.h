@@ -844,12 +844,19 @@ struct ieee80211_snap_hdr {
         u8    oui[P80211_OUI_LEN];    /* organizational universal id */
 } __packed;
 
+/*
+ * Iterate over every interface slot.  _priv is NULL for empty slots, so the
+ * body must cope with that -- previously _priv doubled as the loop condition,
+ * which silently terminated the walk at the first empty slot and made the
+ * "if (!priv) continue;" in every caller unreachable.
+ */
 #define bes2600_for_each_vif(_hw_priv, _priv, _i)			\
 for (									\
 	_i = 0;								\
-	(_i < CW12XX_MAX_VIFS) && \
-	(_priv = hw_priv->vif_list[_i] ? 				\
-	cw12xx_get_vif_from_ieee80211(hw_priv->vif_list[_i]) : NULL);	\
+	(_i < CW12XX_MAX_VIFS) &&					\
+	((_priv = (_hw_priv)->vif_list[_i] ?				\
+	  cw12xx_get_vif_from_ieee80211((_hw_priv)->vif_list[_i]) :	\
+	  NULL) || 1);							\
 	_i++								\
 )
 

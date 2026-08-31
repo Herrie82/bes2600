@@ -118,6 +118,8 @@ static int bes2600_scan_get_first_active_if(struct bes2600_common *hw_priv)
 	struct bes2600_vif *vif;
 
 	bes2600_for_each_vif(hw_priv, vif, i) {
+		if (!vif)
+			continue;
 		if (vif->join_status > BES2600_JOIN_STATUS_PASSIVE)
 			return i;
 	}

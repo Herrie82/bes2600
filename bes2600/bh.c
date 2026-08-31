@@ -436,7 +436,7 @@ static int bes2600_bh(void *arg)
 		spin_lock(&hw_priv->vif_list_lock);
 		bes2600_for_each_vif(hw_priv, priv, i) {
 #ifdef P2P_MULTIVIF
-			if ((i = (CW12XX_MAX_VIFS - 1)) || !priv)
+			if ((i == (CW12XX_MAX_VIFS - 1)) || !priv)
 #else
 			if (!priv)
 #endif
@@ -560,7 +560,7 @@ static int bes2600_bh(void *arg)
 			spin_lock(&hw_priv->vif_list_lock);
 			bes2600_for_each_vif(hw_priv, priv, i) {
 #ifdef P2P_MULTIVIF
-				if ((i = (CW12XX_MAX_VIFS - 1)) || !priv)
+				if ((i == (CW12XX_MAX_VIFS - 1)) || !priv)
 #else
 				if (!priv)
 #endif
