@@ -662,10 +662,15 @@ static void bes2600_unregister_common(struct ieee80211_hw *dev)
 	for (i = 0; i < 4; ++i)
 		bes2600_queue_deinit(&hw_priv->tx_queue[i]);
 	bes2600_queue_stats_deinit(&hw_priv->tx_queue_stats);
-	for (i = 0; i < CW12XX_MAX_VIFS; i++) {
-		kfree(hw_priv->vif_list[i]);
+	/*
+	 * vif_list[] holds struct ieee80211_vif pointers owned by mac80211,
+	 * never by us -- the kfree() that used to be here corrupted the
+	 * mac80211 allocator whenever a slot was still populated.
+	 * ieee80211_unregister_hw() above has already torn every interface
+	 * down, so just drop the references.
+	 */
+	for (i = 0; i < CW12XX_MAX_VIFS; i++)
 		hw_priv->vif_list[i] = NULL;
-	}
 
 	bes2600_pwr_exit(hw_priv);
 }
