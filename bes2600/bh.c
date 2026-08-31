@@ -1498,9 +1498,15 @@ static int bes2600_bh(void *arg)
 			if (!tx_allowed) {
 				/* Buffers full.  Ensure we process tx
 				 * after we handle rx..
+				 *
+				 * "tx" was already cleared a few lines up, so
+				 * "pending_tx = tx" recorded nothing and the
+				 * deferred transmit was simply dropped; TX
+				 * then stalled until some other event woke the
+				 * BH again.
 				 */
 				bes_devel("bh tx not allowed.\n");
-				pending_tx = tx;
+				pending_tx = 1;
 				goto done_rx;
 			}
 			ret = bes2600_bh_tx_helper(hw_priv, &pending_tx, &tx_burst);
