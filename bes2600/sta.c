@@ -232,14 +232,23 @@ void bes2600_stop(struct ieee80211_hw *dev)
 
 	spin_lock(&hw_priv->vif_list_lock);
 	bes2600_for_each_vif(hw_priv, priv, i) {
+		int q;
+
 		if (!priv)
 			continue;
 		if (!(hw_priv->if_id_slot & BIT(priv->if_id)))
-			return;
+			continue;
+		/*
+		 * Bailing out with "return" here used to leave both
+		 * vif_list_lock and conf_lock held, wedging the whole driver.
+		 * The inner loop also reused the iterator of the outer
+		 * bes2600_for_each_vif(), so only the first interface was ever
+		 * looked at.
+		 */
 		/* protect tx confirm flow */
 		spin_lock(&priv->vif_lock);
-		for (i = 0; i < 4; i++)
-			bes2600_queue_clear(&hw_priv->tx_queue[i], i);
+		for (q = 0; q < 4; q++)
+			bes2600_queue_clear(&hw_priv->tx_queue[q], q);
 		spin_unlock(&priv->vif_lock);
 	}
 	spin_unlock(&hw_priv->vif_list_lock);
