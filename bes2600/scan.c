@@ -1058,7 +1058,10 @@ void bes2600_probe_work(struct work_struct *work)
 	wiphy_info(hw_priv->hw->wiphy, "[SCAN] Direct probe work.\n");
 
 	BUG_ON(queueId >= 4);
-	BUG_ON(!hw_priv->channel);
+	if (WARN_ON(!hw_priv->channel)) {
+		wsm_unlock_tx(hw_priv);
+		return;
+	}
 
 	down(&hw_priv->conf_lock);
 	if (unlikely(down_trylock(&hw_priv->scan.lock))) {

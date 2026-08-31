@@ -478,6 +478,16 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 	hw->wiphy->bands[NL80211_BAND_2GHZ] = &bes2600_band_2ghz;
 	hw->wiphy->bands[NL80211_BAND_5GHZ] = &bes2600_band_5ghz;
 
+	/*
+	 * hw_priv->channel is read all over the driver (rate tables, scan,
+	 * join, coex) but was only assigned once mac80211 issued its first
+	 * IEEE80211_CONF_CHANGE_CHANNEL, so anything happening before that
+	 * dereferenced NULL -- or hit one of the BUG_ON(!hw_priv->channel)
+	 * panics.  Start on a valid channel; mac80211 overrides it as soon as
+	 * it configures one.
+	 */
+	hw_priv->channel = &bes2600_2ghz_chantable[0];
+
 	/* Channel params have to be cleared before registering wiphy again */
 	for (band = 0; band < NUM_NL80211_BANDS; band++) {
 		sband = hw->wiphy->bands[band];

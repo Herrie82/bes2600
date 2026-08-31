@@ -651,7 +651,7 @@ void bes2600_bss_info_changed(struct ieee80211_hw *dev,
 				/* TODO:COMBO:Change this once
 				* mac80211 changes are available */
 				enum nl80211_channel_type ch_type;
-				BUG_ON(!hw_priv->channel);
+				WARN_ON(!hw_priv->channel);
 				hw_priv->ht_info.ht_cap = sta->deflink.ht_cap;
 				priv->bss_params.operationalRateSet =
 					__cpu_to_le32(

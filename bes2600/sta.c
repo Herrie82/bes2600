@@ -2090,7 +2090,10 @@ void bes2600_offchannel_work(struct work_struct *work)
 	struct bes2600_queue *queue = &hw_priv->tx_queue[queueId];
 
 	BUG_ON(queueId >= 4);
-	BUG_ON(!hw_priv->channel);
+	if (WARN_ON(!hw_priv->channel)) {
+		wsm_unlock_tx(hw_priv);
+		return;
+	}
 
 	if (unlikely(down_trylock(&hw_priv->scan.lock))) {
 		int ret = 0;
@@ -2174,7 +2177,10 @@ void bes2600_join_work(struct work_struct *work)
 	bssid = &frame->addr1[0]; /* AP SSID in a 802.11 frame */
 
 	BUG_ON(!wsm);
-	BUG_ON(!hw_priv->channel);
+	if (WARN_ON(!hw_priv->channel)) {
+		wsm_unlock_tx(hw_priv);
+		return;
+	}
 
 	if (unlikely(priv->join_status)) {
 		atomic_set(&priv->connect_in_process, 0);
