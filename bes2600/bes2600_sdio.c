@@ -25,7 +25,6 @@
 #include <linux/mmc/sdio.h>
 #include <linux/mmc/sdio_func.h>
 #include <linux/version.h>
-#include <linux/of_gpio.h>
 
 #include "bes2600.h"
 #include "sbus.h"
