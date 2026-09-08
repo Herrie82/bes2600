@@ -272,7 +272,7 @@ static int bes2600_get_cmd_and_ifname(const char *str, char **result)
 		return -2;
 	}
 
-	strncpy(tmp_ptr, str+7, ifname_len);
+	memcpy(tmp_ptr, str+7, ifname_len);
 	tmp_ptr[ifname_len] = '\0';
 	result[0] = tmp_ptr;
 
@@ -296,7 +296,7 @@ static int bes2600_get_cmd_and_ifname(const char *str, char **result)
 		return -3;
 	}
 
-	strncpy(tmp_ptr, cmd_ptr, cmd_len);
+	memcpy(tmp_ptr, cmd_ptr, cmd_len);
 	tmp_ptr[cmd_len] = '\0';
 	result[1] = tmp_ptr;
 
@@ -444,7 +444,7 @@ static int bes2600_op_change_fw_type(const char *str)
 	}
 
 	/* convert fw_type from string to int */
-	strncpy(fw_type, cmd_ptr + 14, 4);
+	strscpy_pad(fw_type, cmd_ptr + 14, sizeof(fw_type));
 	fw_type[0] = '+';
 	ret = kstrtoint(fw_type, 10, &temp);
 	if (ret < 0) {
