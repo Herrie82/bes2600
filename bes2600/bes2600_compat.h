@@ -48,6 +48,9 @@
 #define BES2600_HAVE_CONFIG_RADIO_IDX		1
 #define BES2600_HAVE_RTS_RADIO_IDX		1
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+#define BES2600_HAVE_WQ_PERCPU			1
+#endif
 /* conf_tx() has carried a link_id argument for the whole supported range. */
 #define BES2600_HAVE_CONF_TX_LINK_ID		1
 
@@ -100,6 +103,24 @@
 	.switch_vif_chanctx	= ieee80211_emulate_switch_vif_chanctx,
 #else
 #define BES2600_EMULATE_CHANCTX_OPS
+#endif
+
+/* ---------------------------------------------------------------------- */
+/* Workqueues								  */
+/* ---------------------------------------------------------------------- */
+
+/*
+ * v7.0 made the per-CPU vs unbound choice explicit: alloc_workqueue() callers
+ * that pass neither WQ_PERCPU nor WQ_UNBOUND now get
+ *
+ *   workqueue: <name> is using neither WQ_PERCPU or WQ_UNBOUND.
+ *              Setting WQ_PERCPU.
+ *
+ * plus a WARN backtrace, once per boot.  On older kernels the flag does not
+ * exist and per-CPU is already the default, so zero is the correct value.
+ */
+#ifndef BES2600_HAVE_WQ_PERCPU
+#define WQ_PERCPU	0
 #endif
 
 /* v6.10 renamed ieee80211_tx_status() to ieee80211_tx_status_skb(). */

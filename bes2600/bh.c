@@ -66,7 +66,7 @@ int bes2600_register_bh(struct bes2600_common *hw_priv)
 	/* Realtime workqueue */
 	hw_priv->bh_workqueue = alloc_workqueue("bes2600_bh",
 				WQ_MEM_RECLAIM | WQ_HIGHPRI
-				| WQ_CPU_INTENSIVE, 1);
+				| WQ_CPU_INTENSIVE | WQ_PERCPU, 1);
 
 	if (!hw_priv->bh_workqueue)
 		return -ENOMEM;

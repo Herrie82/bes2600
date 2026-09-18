@@ -1247,7 +1247,8 @@ static int bes2600_sdio_misc_init(struct sbus_priv *self, struct bes2600_common 
 	self->tx_bufferlistpool = kmem_cache_create("sdio_tx_bufferlistpool", sizeof(struct bes_sdio_tx_list_t), 0, SLAB_HWCACHE_ALIGN, NULL);
 	if (!self->tx_bufferlistpool)
 		goto err1;
-	self->sdio_wq = alloc_workqueue("bes_sdio", WQ_MEM_RECLAIM | WQ_HIGHPRI | WQ_CPU_INTENSIVE, 2);
+	self->sdio_wq = alloc_workqueue("bes_sdio",
+			WQ_MEM_RECLAIM | WQ_HIGHPRI | WQ_CPU_INTENSIVE | WQ_PERCPU, 2);
 	if (!self->sdio_wq)
 		goto err0;
 	INIT_WORK(&self->tx_work, sdio_tx_work);

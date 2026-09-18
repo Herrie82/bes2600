@@ -130,6 +130,12 @@ ccflags-y += $(call bes_probe,$(BES_MAC80211_H),ieee80211_emulate_add_chanctx,BE
 ccflags-y += $(call bes_probe,$(BES_MAC80211_H),ieee80211_tx_status_skb,BES2600_HAVE_TX_STATUS_SKB)
 endif
 
+BES_WORKQUEUE_H := $(srctree)/include/linux/workqueue.h
+ifneq ($(wildcard $(BES_WORKQUEUE_H)),)
+# v7.0: alloc_workqueue() callers must say WQ_PERCPU or WQ_UNBOUND explicitly.
+ccflags-y += $(call bes_probe,$(BES_WORKQUEUE_H),WQ_PERCPU,BES2600_HAVE_WQ_PERCPU)
+endif
+
 ifneq ($(wildcard $(BES_TIMER_H)),)
 # v6.2: del_timer_sync -> timer_delete_sync; the old name died in v6.16.
 ccflags-y += $(call bes_probe,$(BES_TIMER_H),timer_delete_sync,BES2600_HAVE_TIMER_DELETE_SYNC)
