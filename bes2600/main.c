@@ -190,7 +190,17 @@ static struct ieee80211_supported_band bes2600_band_5ghz = {
 		.ampdu_density = IEEE80211_HT_MPDU_DENSITY_NONE,
 		.mcs = {
 			.rx_mask[0] = 0xFF,
-			.rx_highest = __cpu_to_le16(0x41),
+			/*
+			 * "Highest supported RX data rate", in Mbps.  0x41 is
+			 * 65, i.e. MCS7 at 20 MHz with a long guard interval,
+			 * which is half what this part actually receives --
+			 * rx_mask already advertises MCS0-7 and the caps above
+			 * advertise 40 MHz and both short guard intervals.
+			 * A well-behaved AP honours the field and pins RX at
+			 * 65 Mbit/s while TX runs at 150.  Zero means
+			 * unspecified, which is what the 2.4 GHz band uses.
+			 */
+			.rx_highest = __cpu_to_le16(0),
 			.tx_params = IEEE80211_HT_MCS_TX_DEFINED,
 		},
 	},
