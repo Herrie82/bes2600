@@ -4379,7 +4379,7 @@ static int bes2600_factory_cali_to_mcu(struct ieee80211_hw *hw, enum bes2600_rf_
 		return -ENOMEM;
 
 	bes2600_factory_lock();
-	factory_data = bes2600_get_factory_cali_data(file_buffer, &factory_data_len, FACTORY_PATH);
+	factory_data = bes2600_get_factory_cali_data(file_buffer, &factory_data_len, bes2600_factory_get_path());
 	if (!factory_data) {
 		bes2600_warn(BES2600_DBG_DOWNLOAD, "factory cali data get failed.\n");
 		ret = -ENOENT;

@@ -68,7 +68,14 @@ BES2600_DRV_VERSION := bes2600_0.3.5_2024.0116
 ifeq ($(CONFIG_BES2600_CALIB_FROM_LINUX),y)
 FACTORY_CRC_CHECK                    ?= n
 STANDARD_FACTORY_EFUSE_FLAG          ?= y
-FACTORY_PATH                 ?= /lib/firmware/bes2600_factory.txt
+# Where the calibration blob lives is a packaging decision.  The vendor default
+# was a flat /lib/firmware/bes2600_factory.txt, but the PineTab2 firmware
+# repository - and so every distribution packaging it - installs the file next
+# to the rest of the BES2600 blobs in /lib/firmware/bes2600/.  The driver tries
+# FACTORY_PATH first and falls back to FACTORY_ALT_PATH, so either layout works
+# without a build-time override.
+FACTORY_PATH                 ?= /lib/firmware/bes2600/bes2600_factory.txt
+FACTORY_ALT_PATH             ?= /lib/firmware/bes2600_factory.txt
 endif
 
 # basic function
@@ -217,6 +224,7 @@ ccflags-y += $(call boolen_flag,CONFIG_BES2600_CALIB_FROM_LINUX,y)
 ccflags-y += $(call value_flag,GET_MAC_ADDR_METHOD)
 ccflags-y += $(call string_flag,PATH_WIFI_MACADDR)
 ccflags-y += $(call string_flag,FACTORY_PATH)
+ccflags-y += $(call string_flag,FACTORY_ALT_PATH)
 ccflags-y += $(call string_flag,FACTORY_DEFAULT_PATH)
 ccflags-y += $(call boolen_flag,FACTORY_SAVE_MULTI_PATH,y)
 ccflags-y += $(call boolen_flag,FACTORY_CRC_CHECK,y)

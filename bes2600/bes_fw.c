@@ -1079,7 +1079,7 @@ int bes2600_load_firmware_sdio(struct sbus_ops *ops, struct sbus_priv *priv)
 		return -ENOMEM;
 
 	bes2600_factory_lock();
-	if (!(factory_data = bes2600_get_factory_cali_data(file_buffer, &factory_data_len, FACTORY_PATH))) {
+	if (!(factory_data = bes2600_get_factory_cali_data(file_buffer, &factory_data_len, bes2600_factory_get_path()))) {
 		bes_warn("factory cali data get failed.\n");
 	} else {
 		bes2600_factory_data_check(factory_data);

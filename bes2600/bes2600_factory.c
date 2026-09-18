@@ -135,7 +135,7 @@ static int bes2600_factory_crc_check(struct factory_t *factory_data)
  * 
  * Return: length on success, negative error code otherwise.
  */
-static int factory_section_read_file(char *path, void *buffer)
+static int factory_section_read_file(const char *path, void *buffer)
 {
 	int ret = 0;
 	struct file *fp;
@@ -180,7 +180,7 @@ static int factory_section_read_file(char *path, void *buffer)
  *
  * Return: length on success, negative error code otherwise.
  */
-static int factory_section_write_file(char *path, void *buffer, int size)
+static int factory_section_write_file(const char *path, void *buffer, int size)
 {
 	int ret = 0;
 	struct file *fp;
@@ -259,7 +259,7 @@ static inline int factory_parse(uint8_t *source_buf, struct factory_t *factory)
 	return ret;
 }
 
-static int factory_section_read_and_check_file(u8 *file_buf, char* path)
+static int factory_section_read_and_check_file(u8 *file_buf, const char *path)
 {
 	int ret = 0;
 
@@ -439,9 +439,63 @@ void bes2600_factory_data_check(u8* data)
 }
 
 /*
+ * Candidate locations for the factory calibration blob, most specific first.
+ *
+ * Which one is right is a packaging decision, not a driver one: the vendor
+ * default was a flat /lib/firmware/bes2600_factory.txt, while the PineTab2
+ * firmware repository installs the file alongside the other BES2600 blobs in
+ * /lib/firmware/bes2600/.  Probing at runtime means the driver works with
+ * either layout, and distributions no longer need a build-time override to
+ * make the chip find its own calibration.
+ */
+static const char * const factory_paths[] = {
+	FACTORY_PATH,
+#ifdef FACTORY_ALT_PATH
+	FACTORY_ALT_PATH,
+#endif
+};
+
+static const char *factory_path_resolved;
+
+/**
+ * bes2600_factory_get_path - locate the factory calibration file
+ *
+ * Returns the first candidate that can be opened, remembering it so a later
+ * calibration save rewrites the file we actually read.  When none exists the
+ * primary candidate is returned anyway: reads will fail and say so, and a
+ * calibration write has somewhere to create the file.
+ */
+const char *bes2600_factory_get_path(void)
+{
+	struct file *fp;
+	int i;
+
+	if (factory_path_resolved)
+		return factory_path_resolved;
+
+	for (i = 0; i < ARRAY_SIZE(factory_paths); i++) {
+		fp = filp_open(factory_paths[i], O_RDONLY, 0);
+		if (!IS_ERR(fp)) {
+			filp_close(fp, NULL);
+			factory_path_resolved = factory_paths[i];
+			bes_info("factory calibration data: %s\n",
+				 factory_path_resolved);
+			return factory_path_resolved;
+		}
+		bes_devel("no factory calibration data at %s\n",
+			  factory_paths[i]);
+	}
+
+	bes_warn("no factory calibration data found (primary: %s)\n",
+		 factory_paths[0]);
+
+	return factory_paths[0];
+}
+
+/*
  * get factory data from file each time, and update factory_p.
  */
-u8* bes2600_get_factory_cali_data(u8 *file_buffer, u32 *data_len, char *path)
+u8* bes2600_get_factory_cali_data(u8 *file_buffer, u32 *data_len, const char *path)
 {
 	u8 *ret_p = NULL;
 
@@ -483,7 +537,7 @@ static bool bes2600_factory_file_status_read(u8 *file_buffer)
 	bool ret = true;
 
 #ifdef FACTORY_SAVE_MULTI_PATH
-	factory_temp = bes2600_get_factory_cali_data(file_buffer, &len, FACTORY_PATH);
+	factory_temp = bes2600_get_factory_cali_data(file_buffer, &len, bes2600_factory_get_path());
 	if (!factory_temp) {
 		bes_warn("get factory cali from first path fali\n");
 		factory_temp = bes2600_get_factory_cali_data(file_buffer, &len, FACTORY_DEFAULT_PATH);
@@ -495,7 +549,7 @@ static bool bes2600_factory_file_status_read(u8 *file_buffer)
 		}
 	}
 #else
-	factory_temp = bes2600_get_factory_cali_data(file_buffer, &len, FACTORY_PATH);
+	factory_temp = bes2600_get_factory_cali_data(file_buffer, &len, bes2600_factory_get_path());
 #endif
 	if (!factory_temp) {
 		bes_warn("get factory data fali, check whether the file exists\n");
@@ -927,9 +981,9 @@ static int bes2600_wifi_cali_table_save(u8 *file_buffer, struct factory_t *facto
 #ifdef FACTORY_SAVE_MULTI_PATH
 	/* avoid trailing characters '\0' */
 	file_buffer[w_size] = 32;
-	ret = factory_section_write_file(FACTORY_PATH, file_buffer, FACTORY_MAX_SIZE);
+	ret = factory_section_write_file(bes2600_factory_get_path(), file_buffer, FACTORY_MAX_SIZE);
 #else
-	ret = factory_section_write_file(FACTORY_PATH, file_buffer, w_size);
+	ret = factory_section_write_file(bes2600_factory_get_path(), file_buffer, w_size);
 #endif
 	if(ret < 0) {
 		bes_err("%s: write failed! ret = %d.", __func__, ret);

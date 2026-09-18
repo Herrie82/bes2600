@@ -200,7 +200,8 @@ enum factory_cali_status {
 #define WIFI_RF_11N_MODE 0x15
 
 /* read wifi & bt factory cali value*/
-u8* bes2600_get_factory_cali_data(u8 *file_buffer, u32 *data_len, char *path);
+u8* bes2600_get_factory_cali_data(u8 *file_buffer, u32 *data_len, const char *path);
+const char *bes2600_factory_get_path(void);
 void factory_little_endian_cvrt(u8 *data);
 void bes2600_factory_data_check(u8* data);
 void bes2600_factory_lock(void);
