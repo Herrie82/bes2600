@@ -490,10 +490,11 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
 	const char __user *user_buf, size_t count, loff_t *ppos)
 {
 	struct bes2600_common *hw_priv = file->private_data;
-	char buf[16];
+	char buf[32];
 	unsigned int mib_id;
 	size_t got = 0;
 	u8 *data;
+	char *p;
 	int ret;
 
 	if (count == 0 || count >= sizeof(buf))
@@ -502,7 +503,42 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
 		return -EFAULT;
 	buf[count] = '\0';
 
-	if (kstrtouint(strim(buf), 16, &mib_id) || mib_id > 0xFFFF)
+	/*
+	 * "<hexid>"          read the MIB
+	 * "w <hexid> <len>"  write <len> zero bytes to it
+	 *
+	 * The filter MIBs in this family are write-only -- reads of 0x101A and
+	 * 0x101B fail even though the driver writes both successfully -- so a
+	 * read cannot tell us whether 0x101C exists.  A write can: the confirm
+	 * carries a status, and wsm_generic_confirm() logs the firmware's own
+	 * code on rejection.  Sweeping the length and watching which one is
+	 * accepted is what pins the payload size down.
+	 *
+	 * Zeros are the benign payload here: for the two documented siblings a
+	 * zeroed header means nrFilters = 0, i.e. "no filters", which is what
+	 * the driver already writes to disable them.
+	 */
+	p = strim(buf);
+	if (p[0] == 'w' && (p[1] == ' ' || p[1] == '\t')) {
+		unsigned int wlen;
+
+		if (sscanf(p + 1, "%x %u", &mib_id, &wlen) != 2)
+			return -EINVAL;
+		if (mib_id > 0xFFFF || wlen == 0 || wlen > BES2600_MIB_PROBE_LEN)
+			return -EINVAL;
+
+		data = kzalloc(wlen, GFP_KERNEL);
+		if (!data)
+			return -ENOMEM;
+
+		ret = wsm_write_mib(hw_priv, (u16)mib_id, data, wlen, 0);
+		bes_info("mib_probe: WRITE 0x%04x len=%u -> %s (%d)\n",
+			 mib_id, wlen, ret ? "REJECTED" : "ACCEPTED", ret);
+		kfree(data);
+		return count;
+	}
+
+	if (kstrtouint(p, 16, &mib_id) || mib_id > 0xFFFF)
 		return -EINVAL;
 
 	data = kzalloc(BES2600_MIB_PROBE_LEN, GFP_KERNEL);
@@ -512,10 +548,10 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
 	ret = wsm_read_mib_sized(hw_priv, (u16)mib_id, data,
 				 BES2600_MIB_PROBE_LEN, &got);
 	if (ret) {
-		bes_info("mib_probe: 0x%04x NOT supported (read failed: %d)\n",
+		bes_info("mib_probe: 0x%04x not readable (read failed: %d)\n",
 			 mib_id, ret);
 	} else {
-		bes_info("mib_probe: 0x%04x supported, firmware reports %zu byte payload\n",
+		bes_info("mib_probe: 0x%04x readable, firmware reports %zu byte payload\n",
 			 mib_id, got);
 		if (got)
 			print_hex_dump(KERN_INFO, "mib_probe: ", DUMP_PREFIX_OFFSET,
