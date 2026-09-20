@@ -327,8 +327,25 @@ static const struct ieee80211_ops bes2600_ops = {
 
 #ifdef CONFIG_PM
 static const struct wiphy_wowlan_support bes2600_wowlan_support = {
-	/* Support only for limited wowlan functionalities */
-	.flags = WIPHY_WOWLAN_ANY | WIPHY_WOWLAN_DISCONNECT,
+	/*
+	 * Advertise only what bes2600_wow_suspend() actually programs.  It
+	 * keeps the association up behind a set of RX filters, which is
+	 * WIPHY_WOWLAN_ANY.
+	 *
+	 * WIPHY_WOWLAN_DISCONNECT used to be listed here and nothing
+	 * implemented it -- the suspend path never even looks at which
+	 * trigger was armed.  Userspace took the claim at face value: with no
+	 * magic-packet support to pick, helpers fall back to "disconnect",
+	 * which then drove the driver down a WoWLAN suspend it could not
+	 * complete and blocked system suspend entirely.
+	 *
+	 * Magic packet is the trigger worth having here and the firmware
+	 * looks like it can do it (WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER),
+	 * but the MIB payload is not documented anywhere in this tree, so it
+	 * stays unadvertised until it is implemented and tested rather than
+	 * guessed at.
+	 */
+	.flags = WIPHY_WOWLAN_ANY,
 };
 #endif
 

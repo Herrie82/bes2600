@@ -254,6 +254,36 @@ int bes2600_wow_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
 
 	WARN_ON(!atomic_read(&hw_priv->num_vifs));
 
+	/*
+	 * Every "we cannot do WoWLAN right now" exit below returns 1, not a
+	 * negative errno.  From the ieee80211_ops::suspend contract:
+	 *
+	 *   The driver may also impose special conditions under which it
+	 *   wants to use the "normal" suspend (deconfigure) [...] In this
+	 *   case, it must return 1 from this function.
+	 *
+	 * A negative return instead propagates out of wiphy_suspend() and
+	 * aborts the whole system transition, so a busy radio stopped the
+	 * tablet suspending at all -- 46 consecutive failed suspends were
+	 * measured this way, each one also resetting the USB controllers on
+	 * the way back up.  Returning 1 lets cfg80211 tear the association
+	 * down and suspend normally: WoWLAN is lost for that cycle, suspend
+	 * is not.
+	 */
+
+	/*
+	 * Only proceed for triggers this driver actually implements.  What
+	 * __bes2600_wow_suspend() does is keep the association up behind a
+	 * set of RX filters, which is WIPHY_WOWLAN_ANY; there is no
+	 * magic-packet or wake-on-disconnect support here.  Anything else
+	 * armed by userspace is honoured by declining, not by silently doing
+	 * something different.
+	 */
+	if (!wowlan || !wowlan->any) {
+		bes_devel("no supported wowlan trigger armed, normal suspend\n");
+		return 1;
+	}
+
 	/* reset wakeup reason to default */
 	bes2600_chrdev_wifi_update_wakeup_reason(0, 0);
 
@@ -277,12 +307,12 @@ int bes2600_wow_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
 	/* Do not suspend when datapath is not idle */
 	if (hw_priv->tx_queue_stats.num_queued[0]
 			+ hw_priv->tx_queue_stats.num_queued[1])
-		return -EBUSY;
+		return 1;
 
 
 	/* Make sure there is no configuration requests in progress. */
 	if (down_trylock(&hw_priv->conf_lock))
-		return -EBUSY;
+		return 1;
 
 	/* Do not suspend when scanning or ROC*/
 	if (down_trylock(&hw_priv->scan.lock))
@@ -357,7 +387,7 @@ int bes2600_wow_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
 		bes_err("%s: bes2600_bh_suspend failed\n",
 				__func__);
 		bes2600_wow_resume(hw);
-		return -EBUSY;
+		return 1;
 	}
 
 	/* Force resume if event is coming from the device. */
@@ -365,7 +395,7 @@ int bes2600_wow_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
 		bes_devel("%s: incoming event present - resume\n",
 				__func__);
 		bes2600_wow_resume(hw);
-		return -EAGAIN;
+		return 1;
 	}
 
 	/* calculate the time consumed by bes2600 suspend flow */
@@ -382,7 +412,8 @@ revert2:
 	up(&hw_priv->scan.lock);
 revert1:
 	up(&hw_priv->conf_lock);
-	return -EBUSY;
+	/* See the comment at the top: 1 means "suspend normally instead". */
+	return 1;
 }
 
 static void bes2600_set_ehter_and_udp_filter(struct bes2600_common *hw_priv,
@@ -535,7 +566,18 @@ int bes2600_wow_resume(struct ieee80211_hw *hw)
 	/* Unlock configuration mutex */
 	up(&hw_priv->conf_lock);
 
-	return ret;
+	/*
+	 * A negative return from ieee80211_ops::resume leaves mac80211 with
+	 * "the only way out is to also unregister the device".  Returning 1
+	 * instead asks it for the regular complete restart, which recovers a
+	 * half-resumed chip without taking the interface away from userspace.
+	 */
+	if (ret) {
+		bes_err("wow resume failed (%d), forcing full restart\n", ret);
+		return 1;
+	}
+
+	return 0;
 }
 
 static int __bes2600_wow_resume(struct bes2600_vif *priv)
