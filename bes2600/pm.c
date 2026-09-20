@@ -446,6 +446,18 @@ static int __bes2600_wow_suspend(struct bes2600_vif *priv,
 	if (work_pending(&priv->join_work))
 		goto revert1;
 
+	/*
+	 * This pair is the whole of WoWLAN on this family: filter the noisy
+	 * broadcast traffic out, filter EAPOL/WAPI in, and let anything that
+	 * survives wake the host.  See the wowlan flags in main.c for why
+	 * there is no magic-packet trigger to arm alongside it.
+	 *
+	 * The XRadio forks follow this with an undocumented one-byte MIB,
+	 * WSM_MIB_ID_SET_HOST_SLEEP (0x1050), written 1 here and 0 on resume.
+	 * BES2600 firmware does not implement it -- a write is rejected with
+	 * -EINVAL while 0x101C is accepted in the same probe run -- so there
+	 * is nothing to mirror here.
+	 */
 	bes2600_set_ehter_and_udp_filter(hw_priv, &bes2600_ether_type_filter_on.hdr,
 				&bes2600_udp_port_filter_on.hdr, priv->if_id);
 

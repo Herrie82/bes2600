@@ -339,11 +339,28 @@ static const struct wiphy_wowlan_support bes2600_wowlan_support = {
 	 * which then drove the driver down a WoWLAN suspend it could not
 	 * complete and blocked system suspend entirely.
 	 *
-	 * Magic packet is the trigger worth having here and the firmware
-	 * looks like it can do it (WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER),
-	 * but the MIB payload is not documented anywhere in this tree, so it
-	 * stays unadvertised until it is implemented and tested rather than
-	 * guessed at.
+	 * Magic packet is the trigger worth having here and the firmware does
+	 * implement the MIB: a write to WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER
+	 * (0x101C) is accepted where bogus IDs are rejected with -EINVAL.  Its
+	 * payload layout is the problem, and it is not recoverable:
+	 *
+	 *  - The firmware accepts any length for it, so sweeping lengths with
+	 *    debugfs mib_probe cannot pin the struct down.
+	 *  - Every driver in this lineage -- mainline cw1200, the Silicon Labs
+	 *    wfx drivers, and the XRadio XR819/XR829 vendor trees -- carries
+	 *    the same "4.34 SetMagicDataFrameFilter" comment and #define with
+	 *    no struct, and not one of them ever calls it.  XR829's wsm.h
+	 *    shows why: "This is the end of specification." sits directly
+	 *    below 0x101C, and whoever transcribed the ST-Ericsson spec into
+	 *    that header stopped writing structs at 4.33.  Every fork since
+	 *    has inherited the truncated copy.
+	 *
+	 * So WIPHY_WOWLAN_ANY is not a placeholder, it is what this hardware
+	 * actually offers.  The family's suspend path quiets the chip with the
+	 * ethertype and UDP-port filters below and wakes on whatever is left,
+	 * which is precisely "any" -- there is no magic-packet match to
+	 * advertise.  Do not add WIPHY_WOWLAN_MAGIC_PKT without a firmware
+	 * that documents 0x101C.
 	 */
 	.flags = WIPHY_WOWLAN_ANY,
 };
