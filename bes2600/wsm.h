@@ -767,6 +767,8 @@ int wsm_reset(struct bes2600_common *hw_priv, const struct wsm_reset *arg,
 	      int if_id);
 
 /* 3.5 */
+int wsm_read_mib_sized(struct bes2600_common *hw_priv, u16 mibId, void *buf,
+			size_t buf_size, size_t *out_size);
 int wsm_read_mib(struct bes2600_common *hw_priv, u16 mibId, void *buf,
 		 size_t buf_size);
 

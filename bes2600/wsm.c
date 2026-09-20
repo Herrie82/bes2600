@@ -418,8 +418,8 @@ nomem:
 
 /* ******************************************************************** */
 
-int wsm_read_mib(struct bes2600_common *hw_priv, u16 mibId, void *_buf,
-			size_t buf_size)
+int wsm_read_mib_sized(struct bes2600_common *hw_priv, u16 mibId, void *_buf,
+			size_t buf_size, size_t *out_size)
 {
 	int ret;
 	struct wsm_buf *buf = &hw_priv->wsm_cmd_buf;
@@ -436,11 +436,26 @@ int wsm_read_mib(struct bes2600_common *hw_priv, u16 mibId, void *_buf,
 
 	ret = wsm_cmd_send(hw_priv, buf, &mib_buf, 0x0005, WSM_CMD_TIMEOUT, -1);
 	wsm_cmd_unlock(hw_priv);
+
+	/*
+	 * wsm_read_mib_confirm() writes the length the firmware reported back
+	 * into mib_buf.buf_size, and wsm_cmd_send() is synchronous, so it is
+	 * valid by the time we get here.  That length is the only authoritative
+	 * description of an undocumented MIB's payload we have.
+	 */
+	if (!ret && out_size)
+		*out_size = mib_buf.buf_size;
 	return ret;
 
 nomem:
 	wsm_cmd_unlock(hw_priv);
 	return -ENOMEM;
+}
+
+int wsm_read_mib(struct bes2600_common *hw_priv, u16 mibId, void *_buf,
+			size_t buf_size)
+{
+	return wsm_read_mib_sized(hw_priv, mibId, _buf, buf_size, NULL);
 }
 
 static int wsm_read_mib_confirm(struct bes2600_common *hw_priv,

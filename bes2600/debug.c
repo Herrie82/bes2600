@@ -460,6 +460,79 @@ static const struct file_operations dpd_log_dump = {
 };
 #endif /* BES2600_DUMP_FW_DPD_LOG */
 
+
+/* Generous: the largest MIB this driver reads today is well under this. */
+#define BES2600_MIB_PROBE_LEN	256
+
+/*
+ * mib_probe - ask the firmware to describe an undocumented MIB.
+ *
+ * Several MIB IDs in wsm.h were inherited wholesale from the ST-Ericsson
+ * CW1200 driver this one descends from, with only a section number as a
+ * comment and no payload struct -- SetMagicDataFrameFilter (0x101C), needed
+ * for WIPHY_WOWLAN_MAGIC_PKT, is one of them.  No driver in that lineage
+ * implements them (mainline cw1200 and both the mainline and upstream Silicon
+ * Labs wfx drivers all name the ID and stop there), and the firmware image is
+ * packed, so there is nothing to read statically.
+ *
+ * The firmware will answer though: a ReadMIB confirm carries the payload
+ * length it considers correct for that ID, and its current contents.  An
+ * unsupported ID fails the confirm instead.  That is enough to tell whether a
+ * MIB exists at all, and to pin down its size before anyone writes to it.
+ *
+ *   echo 101c > /sys/kernel/debug/ieee80211/phy0/bes2600/mib_probe
+ *   dmesg | tail
+ *
+ * Probe the two implemented neighbours (101a ethertype, 101b UDP port) first:
+ * they are known-good controls for the method.
+ */
+static ssize_t bes2600_mib_probe_write(struct file *file,
+	const char __user *user_buf, size_t count, loff_t *ppos)
+{
+	struct bes2600_common *hw_priv = file->private_data;
+	char buf[16];
+	unsigned int mib_id;
+	size_t got = 0;
+	u8 *data;
+	int ret;
+
+	if (count == 0 || count >= sizeof(buf))
+		return -EINVAL;
+	if (copy_from_user(buf, user_buf, count))
+		return -EFAULT;
+	buf[count] = '\0';
+
+	if (kstrtouint(strim(buf), 16, &mib_id) || mib_id > 0xFFFF)
+		return -EINVAL;
+
+	data = kzalloc(BES2600_MIB_PROBE_LEN, GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
+	ret = wsm_read_mib_sized(hw_priv, (u16)mib_id, data,
+				 BES2600_MIB_PROBE_LEN, &got);
+	if (ret) {
+		bes_info("mib_probe: 0x%04x NOT supported (read failed: %d)\n",
+			 mib_id, ret);
+	} else {
+		bes_info("mib_probe: 0x%04x supported, firmware reports %zu byte payload\n",
+			 mib_id, got);
+		if (got)
+			print_hex_dump(KERN_INFO, "mib_probe: ", DUMP_PREFIX_OFFSET,
+				       16, 1, data, min(got, (size_t)BES2600_MIB_PROBE_LEN),
+				       false);
+	}
+
+	kfree(data);
+	return count;
+}
+
+static const struct file_operations fops_mib_probe = {
+	.open = bes2600_generic_open,
+	.write = bes2600_mib_probe_write,
+	.llseek = default_llseek,
+};
+
 int bes2600_debug_init_common(struct bes2600_common *hw_priv)
 {
 	int ret = -ENOMEM;
@@ -484,6 +557,10 @@ int bes2600_debug_init_common(struct bes2600_common *hw_priv)
 
 	if (!debugfs_create_file("11n", S_IRUSR | S_IWUSR,
 			d->debugfs_phy, hw_priv, &fops_11n))
+		goto err;
+
+	if (!debugfs_create_file("mib_probe", S_IWUSR, d->debugfs_phy,
+			hw_priv, &fops_mib_probe))
 		goto err;
 
 	if (!debugfs_create_file("wsm_dumps", S_IWUSR, d->debugfs_phy,
