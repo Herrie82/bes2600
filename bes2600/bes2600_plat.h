@@ -24,6 +24,8 @@ struct bes2600_platform_data_sdio {
 	struct gpio_desc *wakeup;         /* GPIO to WAKEUP signal (0 disables) */
 	struct gpio_desc *host_wakeup;    /* wifi GPIO to WAKEUP host signal (0 disables) */
 	bool wlan_bt_hostwake_registered;/* wifi request_irq success or not */
+	bool host_nonremovable;          /* MMC_CAP_NONREMOVABLE as the host had it */
+	bool host_nonremovable_valid;    /* host_nonremovable has been sampled */
 	struct gpio_desc *gpio_irq;       /* IRQ line or 0 to use SDIO IRQ */
 	int (*power_ctrl)(const struct bes2600_platform_data_sdio *pdata,
 			  bool enable); /* Control 3v3 / 1v8 supply */

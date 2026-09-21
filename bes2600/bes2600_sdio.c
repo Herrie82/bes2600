@@ -536,6 +536,52 @@ static int bes2600_sdio_irq_unsubscribe(struct sbus_priv *self)
 	return ret;
 }
 
+/*
+ * MMC_CAP_NONREMOVABLE handling.
+ *
+ * The part is soldered down, so the driver marks the host non-removable while
+ * it is bound.  What it used to do on the way out was clear that flag
+ * unconditionally and schedule sdio_scan_work() to find the card again -- but
+ * that function's entire body is a warning saying it does nothing.  The MMC
+ * core was therefore left believing a card that cannot be removed might have
+ * gone away, with nothing ever looking again.  Once the core marks the card
+ * removed, every SDIO access returns -ENOMEDIUM and reloading the module
+ * cannot recover:
+ *
+ *   bes2600_wlan mmc2:0001:1: probe with driver bes2600_wlan failed with error -123
+ *
+ * which left the board with no wlan0 until it was rebooted.  Setting the flag
+ * again in probe does not undo it, because the removed state belongs to the
+ * card rather than to the capability.
+ *
+ * Remember what the host itself was configured for the first time we see it,
+ * and put that back rather than forcing the flag low.  A host that really does
+ * have a removable card keeps its old behaviour; one describing a soldered
+ * part is no longer told its card may have vanished.
+ */
+static void bes2600_host_claim_nonremovable(struct sdio_func *func)
+{
+	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
+
+	if (!pdata->host_nonremovable_valid) {
+		pdata->host_nonremovable =
+			!!(func->card->host->caps & MMC_CAP_NONREMOVABLE);
+		pdata->host_nonremovable_valid = true;
+	}
+
+	func->card->host->caps |= MMC_CAP_NONREMOVABLE;
+}
+
+static void bes2600_host_restore_removable(struct sdio_func *func)
+{
+	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
+
+	if (pdata->host_nonremovable_valid && pdata->host_nonremovable)
+		return;		/* the host is non-removable in its own right */
+
+	func->card->host->caps &= ~MMC_CAP_NONREMOVABLE;
+}
+
 static void bes2600_sdio_off(const struct bes2600_platform_data_sdio *pdata)
 {
 	bes_devel("%s\n", __func__);
@@ -1740,8 +1786,13 @@ static void bes2600_sdio_power_down(struct sbus_priv *self)
 
 	msleep(10);
 
-	self->func->card->host->caps &= ~MMC_CAP_NONREMOVABLE;
-	schedule_work(&self->sdio_scan_work);
+	/*
+	 * Deliberately not clearing MMC_CAP_NONREMOVABLE here.  The card does
+	 * not go anywhere -- on this hardware the power lines are driven by
+	 * the mmc-pwrseq attached to the host, not by this driver -- and the
+	 * rescan that was meant to pair with it never happens.
+	 */
+	bes2600_host_restore_removable(self->func);
 
 }
 
@@ -1825,7 +1876,7 @@ static int bes2600_sdio_probe(struct sdio_func *func,
 	if (func->num > 1)
 		return 0;
 
-	func->card->host->caps |= MMC_CAP_NONREMOVABLE;
+	bes2600_host_claim_nonremovable(func);
 	bes2600_chrdev_bus_probe_notify();
 
 	self = kzalloc(sizeof(*self), GFP_KERNEL);
@@ -1891,7 +1942,7 @@ out:
 
 err:
 	bes_err("%s failed, func:%d\n", __func__, func->num);
-	func->card->host->caps &= ~MMC_CAP_NONREMOVABLE;
+	bes2600_host_restore_removable(func);
 	sdio_claim_host(func);
 	sdio_disable_func(func);
 	sdio_release_host(func);
@@ -1969,7 +2020,7 @@ static void bes2600_sdio_remove(struct sdio_func *func)
 {
 	struct sbus_priv *self = sdio_get_drvdata(func);
 
-	func->card->host->caps &= ~MMC_CAP_NONREMOVABLE;
+	bes2600_host_restore_removable(func);
 	bes_devel("%s called:%p,%d\n", __func__, func, func->num);
 
 	if (self) {
