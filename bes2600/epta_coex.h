@@ -80,6 +80,7 @@ void coex_set_fdd_mode(bool fdd_mode);
 bool coex_is_bt_a2dp(void);
 bool coex_is_bt_inactive(void);
 bool coex_is_wifi_inactive(void);
+uint8_t coex_get_conn_state(void);
 
 #endif
 

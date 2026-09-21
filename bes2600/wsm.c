@@ -712,13 +712,15 @@ static int wsm_join_confirm(struct bes2600_common *hw_priv,
 		 */
 		bes_warn("wsm_join_confirm ret %u: mode %u band %u ch %u bssid %pM "
 			 "ssid_len %u dtim %u beacon %u preamble %u probe %u "
-			 "basic_rates 0x%08x flags 0x%02x scan_in_progress %d scan_req %c\n",
+			 "basic_rates 0x%08x flags 0x%02x scan_in_progress %d scan_req %c "
+			 "coex_state %u\n",
 			 status, arg->mode, arg->band, arg->channelNumber,
 			 arg->bssid, arg->ssidLength, arg->dtimPeriod,
 			 arg->beaconInterval, arg->preambleType,
 			 arg->probeForJoin, arg->basicRateSet, arg->flags,
 			 atomic_read(&hw_priv->scan.in_progress),
-			 hw_priv->scan.req ? 'y' : 'n');
+			 hw_priv->scan.req ? 'y' : 'n',
+			 coex_get_conn_state());
 		return -EINVAL;
 	}
 

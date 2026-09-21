@@ -382,6 +382,11 @@ void coex_set_wifi_conn(struct bes2600_common *hw_priv, uint8_t connect_status)
 	}
 }
 
+uint8_t coex_get_conn_state(void)
+{
+	return epta_conn_state;
+}
+
 bool coex_is_wifi_inactive()
 {
 	bes_devel("%s, epta_conn_state:%d", __FUNCTION__, epta_conn_state);
