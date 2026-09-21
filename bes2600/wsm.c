@@ -1889,19 +1889,20 @@ underflow:
 
 static struct wsm_cmd_hist_ent {
 	unsigned long	when;
+	u32		detail;		/* first payload word, for the few that matter */
 	u16		cmd;
 	s8		if_id;
 } wsm_cmd_hist[WSM_CMD_HIST_LEN];
 static unsigned int wsm_cmd_hist_pos;
 static DEFINE_SPINLOCK(wsm_cmd_hist_lock);
 
-static void wsm_cmd_hist_add(u16 cmd, int if_id)
+static void wsm_cmd_hist_add(u16 cmd, int if_id, u32 detail)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&wsm_cmd_hist_lock, flags);
 	wsm_cmd_hist[wsm_cmd_hist_pos % WSM_CMD_HIST_LEN] =
-		(struct wsm_cmd_hist_ent){ jiffies, cmd, (s8)if_id };
+		(struct wsm_cmd_hist_ent){ jiffies, detail, cmd, (s8)if_id };
 	wsm_cmd_hist_pos++;
 	spin_unlock_irqrestore(&wsm_cmd_hist_lock, flags);
 }
@@ -1924,6 +1925,7 @@ static const char *wsm_cmd_name(u16 cmd)
 	case 0x0012:	return "tx-queue-params";
 	case 0x0013:	return "edca-params";
 	case 0x0016:	return "switch-channel";
+	case 0x0029:	return "epta-airtime";
 	default:	return "?";
 	}
 }
@@ -1946,9 +1948,14 @@ static void wsm_cmd_hist_dump(void)
 
 		if (!e->when)
 			continue;
-		bes_warn("  -%5u ms  0x%.4X %-16s if %d\n",
-			 jiffies_to_msecs(now - e->when), e->cmd,
-			 wsm_cmd_name(e->cmd), e->if_id);
+		if (e->cmd == 0x0029)
+			bes_warn("  -%5u ms  0x%.4X %-16s if %d  wlan_duration %u\n",
+				 jiffies_to_msecs(now - e->when), e->cmd,
+				 wsm_cmd_name(e->cmd), e->if_id, e->detail);
+		else
+			bes_warn("  -%5u ms  0x%.4X %-16s if %d\n",
+				 jiffies_to_msecs(now - e->when), e->cmd,
+				 wsm_cmd_name(e->cmd), e->if_id);
 	}
 }
 
@@ -1966,7 +1973,11 @@ int wsm_cmd_send(struct bes2600_common *hw_priv,
 	else
 		bes_devel("[WSM] >>> 0x%.4X (%lu)\n", cmd, (long unsigned)buf_len);
 
-	wsm_cmd_hist_add(cmd, if_id);
+	/* The first payload word is the only detail worth keeping: for the
+	 * EPTA command it is wlan_duration, and an airtime of zero would stop
+	 * the firmware transmitting at all. */
+	wsm_cmd_hist_add(cmd, if_id,
+			 buf_len > 4 ? __le32_to_cpu(*(__le32 *)&buf->begin[4]) : 0);
 
 	/* Fill HI message header */
 	/* BH will add sequence number */
