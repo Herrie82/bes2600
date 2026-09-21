@@ -2366,6 +2366,25 @@ void bes2600_join_work(struct work_struct *work)
 			dev_kfree_skb(probe_tmp.skb);
 		}
 
+		/*
+		 * hw_priv->channel is what JOIN is aimed at, and it is only
+		 * refreshed when mac80211 hands us IEEE80211_CONF_CHANGE_CHANNEL.
+		 * If it has drifted from the channel mac80211 is currently
+		 * configured for, the join goes to the wrong place, so say so
+		 * rather than leaving it to be inferred from a failure later.
+		 */
+		if (conf->chandef.chan &&
+		    conf->chandef.chan != hw_priv->channel)
+			bes_warn("[STA] join channel %d (wsm ch %d) but mac80211 is on %d (wsm ch %d)\n",
+				 hw_priv->channel->center_freq,
+				 hw_priv->channel->hw_value,
+				 conf->chandef.chan->center_freq,
+				 conf->chandef.chan->hw_value);
+
+		bes_devel("[STA] join ch %d band %d bssid %pM scan_in_progress %d\n",
+			  join.channelNumber, join.band, join.bssid,
+			  atomic_read(&hw_priv->scan.in_progress));
+
 		if (wsm_join(hw_priv, &join, priv->if_id)) {
 			memset(&priv->join_bssid[0],
 				0, sizeof(priv->join_bssid));

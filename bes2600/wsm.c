@@ -701,7 +701,24 @@ static int wsm_join_confirm(struct bes2600_common *hw_priv,
 	wsm_oper_unlock(hw_priv);
 
 	if (status != WSM_STATUS_SUCCESS) {
-		bes_warn("wsm_join_confirm ret %u\n", status);
+		/*
+		 * A rejected JOIN costs an association outright: mac80211
+		 * gives auth three tries about 130ms apart and then reports
+		 * "authentication timed out", so the reason the firmware said
+		 * no has to be legible from one line.  Print everything that
+		 * went into the request, plus whether a scan was in flight --
+		 * scan and join share one single-threaded workqueue and the
+		 * firmware only tracks one radio operation at a time.
+		 */
+		bes_warn("wsm_join_confirm ret %u: mode %u band %u ch %u bssid %pM "
+			 "ssid_len %u dtim %u beacon %u preamble %u probe %u "
+			 "basic_rates 0x%08x flags 0x%02x scan_in_progress %d scan_req %c\n",
+			 status, arg->mode, arg->band, arg->channelNumber,
+			 arg->bssid, arg->ssidLength, arg->dtimPeriod,
+			 arg->beaconInterval, arg->preambleType,
+			 arg->probeForJoin, arg->basicRateSet, arg->flags,
+			 atomic_read(&hw_priv->scan.in_progress),
+			 hw_priv->scan.req ? 'y' : 'n');
 		return -EINVAL;
 	}
 
