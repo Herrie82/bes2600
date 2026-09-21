@@ -2668,12 +2668,12 @@ static bool wsm_handle_tx_data(struct bes2600_vif *priv,
 		wsm_lock_tx_async(hw_priv);
 		hw_priv->pending_frame_id = __le32_to_cpu(wsm->packetID);
 
-		/*
-		 * The coex "connecting" transition used to be signalled here,
-		 * before join_work ran.  It freezes the EPTA arbiter, and the
-		 * firmware then refuses the JOIN, so it is done in
-		 * bes2600_join_work() once the JOIN has been accepted.
-		 */
+#ifdef WIFI_BT_COEXIST_EPTA_ENABLE
+		if (hw_priv->channel->band != NL80211_BAND_2GHZ)
+			bwifi_change_current_status(hw_priv, BWIFI_STATUS_CONNECTING_5G);
+		else
+			bwifi_change_current_status(hw_priv, BWIFI_STATUS_CONNECTING);
+#endif
 		if (queue_work(hw_priv->workqueue, &priv->join_work) <= 0)
 			wsm_unlock_tx(hw_priv);
 		handled = true;

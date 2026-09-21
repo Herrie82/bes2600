@@ -2182,7 +2182,7 @@ void bes2600_join_work(struct work_struct *work)
 	struct wsm_template_frame probe_tmp = {
 		.frame_type = WSM_FRAME_TYPE_PROBE_REQUEST,
 	};
-	int join_ret;
+	int join_try, join_ret = 0;
 	/*struct wsm_reset reset = {
 		.reset_statistics = true,
 	};*/
@@ -2387,24 +2387,34 @@ void bes2600_join_work(struct work_struct *work)
 			  atomic_read(&hw_priv->scan.in_progress));
 
 		/*
-		 * Tell the coex arbiter we are connecting only once the firmware
-		 * has taken the JOIN.  Signalling it beforehand -- which is what
-		 * the doJoin handler used to do -- freezes the EPTA arbiter for
-		 * the connect phase and the JOIN is then refused: every one of 18
-		 * rejections measured on a PineTab2 carried coex_state 3
-		 * (EPTA_STATE_WIFI_CONNECTING) and there were no rejections in any
-		 * other state.  JOIN is only the AP/STA synchronisation step; the
-		 * auth and assoc exchanges this freeze exists to protect all
-		 * happen after it, so they are still covered.
+		 * The firmware rejects a JOIN now and then and accepts an
+		 * identical one moments later.  Measured on a PineTab2 at
+		 * boot: three rejections 140ms apart carrying the same
+		 * channel, BSSID, SSID and rate set, then success against
+		 * that same AP once mac80211 retried the whole association
+		 * 44 seconds later.  Nothing in the request differs between
+		 * the two, and no scan was in flight either time, so what is
+		 * being refused is the timing rather than the contents.
+		 *
+		 * mac80211 gives auth three tries before it gives up with
+		 * "authentication timed out", and every one of those lands
+		 * here, so a rejection handed straight back costs the entire
+		 * association.  Retry a couple of times first.  The delay is
+		 * deliberately small: this runs on the driver's single
+		 * threaded workqueue, which also carries scan completion, so
+		 * it must not be blocked for long.
 		 */
-		join_ret = wsm_join(hw_priv, &join, priv->if_id);
+		for (join_try = 0; join_try < BES2600_JOIN_TRIES; join_try++) {
+			join_ret = wsm_join(hw_priv, &join, priv->if_id);
+			if (!join_ret)
+				break;
 
-#ifdef WIFI_BT_COEXIST_EPTA_ENABLE
-		if (!join_ret)
-			bwifi_change_current_status(hw_priv,
-				hw_priv->channel->band != NL80211_BAND_2GHZ ?
-				BWIFI_STATUS_CONNECTING_5G : BWIFI_STATUS_CONNECTING);
-#endif
+			if (join_try + 1 < BES2600_JOIN_TRIES) {
+				bes_warn("[STA] JOIN rejected, retrying (%d/%d)\n",
+					 join_try + 1, BES2600_JOIN_TRIES - 1);
+				msleep(BES2600_JOIN_RETRY_MS);
+			}
+		}
 
 		if (join_ret) {
 			memset(&priv->join_bssid[0],

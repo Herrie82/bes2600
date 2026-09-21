@@ -306,6 +306,15 @@ struct ip_alive_cfg {
 };
 #endif /* CONFIG_BES2600_KEEP_ALIVE */
 
+/*
+ * How many times to offer a JOIN to the firmware before giving the failure
+ * back to mac80211, and how long to wait between attempts.  Three attempts
+ * 20ms apart fit comfortably inside one of mac80211's auth tries (~140ms)
+ * while keeping the driver's single threaded workqueue responsive.
+ */
+#define BES2600_JOIN_TRIES	3
+#define BES2600_JOIN_RETRY_MS	20
+
 struct bes2600_common {
 	struct bes2600_debug_common	*debug;
 	struct bes2600_queue		tx_queue[4];
