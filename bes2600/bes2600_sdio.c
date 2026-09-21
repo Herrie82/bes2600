@@ -1841,6 +1841,29 @@ static int bes2600_sdio_probe(struct sdio_func *func,
 		goto err;
 
 	self->pdata = bes2600_get_platform_data();
+
+	/*
+	 * Power the chip up before touching it.
+	 *
+	 * bes2600_sdio_exit() drives both powerup and reset low, so after a
+	 * module unload the part is off while its SDIO functions stay
+	 * enumerated on the bus.  Nothing in this path raised powerup again --
+	 * the first load after boot only worked because the chip was already
+	 * powered -- so every reload probed a powered-down device and every
+	 * SDIO access returned -ENOMEDIUM:
+	 *
+	 *   bes2600_wlan mmc2:0001:1: probe with driver bes2600_wlan failed
+	 *                             with error -123
+	 *
+	 * which left the board with no wlan0 at all until it was rebooted.
+	 * Raising powerup here is idempotent: on the first probe the line is
+	 * already high and this changes nothing.
+	 */
+	bes2600_sdio_on(self->pdata);
+	/* Let the supply and the internal reset settle before the first
+	 * command; the chip is not ready the instant the rail comes up. */
+	msleep(50);
+
 	self->func = func;
 	self->dev = &func->dev;
 	self->gpio_wakup_flags = 0;
