@@ -102,6 +102,8 @@ static int wsm_cmd_send(struct bes2600_common *hw_priv,
 static struct bes2600_vif
 	*wsm_get_interface_for_tx(struct bes2600_common *hw_priv);
 
+static void wsm_cmd_hist_dump(void);
+
 static inline void wsm_cmd_lock(struct bes2600_common *hw_priv)
 {
 	bes2600_pwr_set_busy_event(hw_priv, BES_PWR_LOCK_ON_WSM_TX);
@@ -721,6 +723,8 @@ static int wsm_join_confirm(struct bes2600_common *hw_priv,
 			 atomic_read(&hw_priv->scan.in_progress),
 			 hw_priv->scan.req ? 'y' : 'n',
 			 coex_get_conn_state());
+		bes_warn("wsm commands leading up to it, oldest first:\n");
+		wsm_cmd_hist_dump();
 		return -EINVAL;
 	}
 
@@ -1871,6 +1875,83 @@ underflow:
 /* ******************************************************************** */
 /* WSM TX								*/
 
+/*
+ * Last few WSM commands handed to the firmware.
+ *
+ * A JOIN is refused now and then with every field correct, so what matters is
+ * what the firmware was asked to do just before it.  Dumping every frame does
+ * not answer that: the per-frame hex dumps run at ~450 frames a second and
+ * wrap the kernel ring buffer in well under a minute, losing the window they
+ * were meant to capture.  Recording just the command ids costs nothing and
+ * keeps the history intact.
+ */
+#define WSM_CMD_HIST_LEN	16
+
+static struct wsm_cmd_hist_ent {
+	unsigned long	when;
+	u16		cmd;
+	s8		if_id;
+} wsm_cmd_hist[WSM_CMD_HIST_LEN];
+static unsigned int wsm_cmd_hist_pos;
+static DEFINE_SPINLOCK(wsm_cmd_hist_lock);
+
+static void wsm_cmd_hist_add(u16 cmd, int if_id)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&wsm_cmd_hist_lock, flags);
+	wsm_cmd_hist[wsm_cmd_hist_pos % WSM_CMD_HIST_LEN] =
+		(struct wsm_cmd_hist_ent){ jiffies, cmd, (s8)if_id };
+	wsm_cmd_hist_pos++;
+	spin_unlock_irqrestore(&wsm_cmd_hist_lock, flags);
+}
+
+static const char *wsm_cmd_name(u16 cmd)
+{
+	switch (cmd) {
+	case 0x0004:	return "read-mib";
+	case 0x0006:	return "write-mib";
+	case 0x0007:	return "start-scan";
+	case 0x0008:	return "stop-scan";
+	case 0x0009:	return "configuration";
+	case 0x000A:	return "reset";
+	case 0x000B:	return "join";
+	case 0x000C:	return "add-key";
+	case 0x000D:	return "remove-key";
+	case 0x000E:	return "tx-rate-retry";
+	case 0x0010:	return "set-pm";
+	case 0x0011:	return "set-bss-params";
+	case 0x0012:	return "tx-queue-params";
+	case 0x0013:	return "edca-params";
+	case 0x0016:	return "switch-channel";
+	default:	return "?";
+	}
+}
+
+/* Print the command history newest last, with ages relative to now. */
+static void wsm_cmd_hist_dump(void)
+{
+	struct wsm_cmd_hist_ent snap[WSM_CMD_HIST_LEN];
+	unsigned long flags, now = jiffies;
+	unsigned int pos, i;
+
+	spin_lock_irqsave(&wsm_cmd_hist_lock, flags);
+	memcpy(snap, wsm_cmd_hist, sizeof(snap));
+	pos = wsm_cmd_hist_pos;
+	spin_unlock_irqrestore(&wsm_cmd_hist_lock, flags);
+
+	for (i = 0; i < WSM_CMD_HIST_LEN; i++) {
+		const struct wsm_cmd_hist_ent *e =
+			&snap[(pos + i) % WSM_CMD_HIST_LEN];
+
+		if (!e->when)
+			continue;
+		bes_warn("  -%5u ms  0x%.4X %-16s if %d\n",
+			 jiffies_to_msecs(now - e->when), e->cmd,
+			 wsm_cmd_name(e->cmd), e->if_id);
+	}
+}
+
 int wsm_cmd_send(struct bes2600_common *hw_priv,
 		 struct wsm_buf *buf,
 		 void *arg, u16 cmd, long tmo, int if_id)
@@ -1884,6 +1965,8 @@ int wsm_cmd_send(struct bes2600_common *hw_priv,
 			(long unsigned)buf_len);
 	else
 		bes_devel("[WSM] >>> 0x%.4X (%lu)\n", cmd, (long unsigned)buf_len);
+
+	wsm_cmd_hist_add(cmd, if_id);
 
 	/* Fill HI message header */
 	/* BH will add sequence number */
