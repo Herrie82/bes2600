@@ -619,6 +619,41 @@ void bes2600_bss_info_changed(struct ieee80211_hw *dev,
 			priv->cqm_beacon_loss_count = 50;
 			#endif
 			priv->cqm_tx_failure_thold = 0;
+
+			/*
+			 * Leaving a BSS has to be told to the firmware, not just
+			 * to the AP.
+			 *
+			 * This branch used to do nothing but reset the CQM
+			 * thresholds, so after a disconnect the firmware was
+			 * still joined to the BSS mac80211 had already walked
+			 * away from.  The next JOIN, for that same BSSID, was
+			 * then refused:
+			 *
+			 *   wlan0: deauthenticating from ... (Reason: 3=DEAUTH_LEAVING)
+			 *   ...
+			 *   wsm_join_confirm ret 1: ... bssid <same> ... (x3)
+			 *   wlan0: authentication with ... timed out
+			 *
+			 * with every field of the request correct and no reset
+			 * anywhere in the commands leading up to it.  That is
+			 * the reconnect failure seen on a PineTab2: the first
+			 * association after boot works, and a later one against
+			 * the same AP does not.
+			 *
+			 * bes2600_unjoin_work() is what sends the reset, so ask
+			 * for it here.  It takes conf_lock, which is held
+			 * across this callback, so it has to be queued rather
+			 * than called, and it expects tx locked and unlocks it
+			 * itself -- the same handshake bes2600_remove_interface()
+			 * uses.
+			 */
+			if (priv->join_status == BES2600_JOIN_STATUS_STA) {
+				wsm_lock_tx(hw_priv);
+				if (queue_work(hw_priv->workqueue,
+					       &priv->unjoin_work) <= 0)
+					wsm_unlock_tx(hw_priv);
+			}
 		}
 		priv->cqm_tx_failure_count = 0;
 	}
