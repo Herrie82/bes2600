@@ -1156,8 +1156,22 @@ int wsm_epta_cmd(struct bes2600_common *hw_priv, struct wsm_epta_msg *arg)
 		// }
 	}
 
-	bes_devel("epta cmd: wlan:%d bt:%d enable:%x",
-		arg->wlan_duration, arg->bt_duration, arg->hw_epta_enable);
+	/*
+	 * Every EPTA airtime command goes through here, after the overrides
+	 * above have had their say, so this is the only place that shows what
+	 * the firmware is actually told.  The policy layer in epta_coex.c is
+	 * not that place: coex_epta_freeze_update() and its siblings build a
+	 * wsm_epta_msg and call straight into here without going through
+	 * coex_set_epta_params(), so instrumenting that function showed
+	 * nothing at all over a whole boot.
+	 *
+	 * Warn rather than debug.  Devel logs are off in normal builds, which
+	 * is why the airtime split has never been visible, and the question it
+	 * answers is whether WiFi really is left with 20000us of each 102400us
+	 * period while it is moving data.
+	 */
+	bes_warn("epta cmd: wlan:%d bt:%d enable:%x\n",
+		 arg->wlan_duration, arg->bt_duration, arg->hw_epta_enable);
 
 	/*
 	Should lock tx queue to avoid frame stuck in firmware if wlan_duration is zero.

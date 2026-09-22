@@ -52,25 +52,8 @@ int coex_set_epta_params(struct bes2600_common *hw_priv, int wlan_duration, int 
 		return -1;
 	}
 
-	/*
-	 * Log every airtime change the driver asks the firmware for.
-	 *
-	 * Once WiFi has an IP this file asks for 20000us of every 102400us
-	 * TDD period and hands the other 80000us to Bluetooth, and the
-	 * throughput-based adjustment that would claw some back never runs:
-	 * the same call sets hw_epta_enable to 3, so EPTA_MODE_CFG is
-	 * non-zero and coex_set_epta_thp() returns immediately.  Measured on a
-	 * PineTab2, 2.4GHz sits at 11.1 Mbit/s on a 65 Mbit/s link with more
-	 * retries than transmitted frames, at -40 dBm with an idle CPU, and
-	 * 20% of 65 is about 13.  That is suggestive but not proof: it is not
-	 * established whether hw_epta_enable 3 makes these durations a hard
-	 * split or leaves arbitration to the hardware, which is what this is
-	 * for.  Warn rather than debug so it shows up without devel logs.
-	 */
-	bes_warn("set epta w:%d bt:%d hw:%d wc:%d fbit:%x fw:%d\n",
-		 wlan_duration, bt_duration, hw_epta_enable,
-		 wlan_duration_cfg, epta_freeze_bitmap,
-		 epta_freezed_wlan_duration_cfg);
+	bes_devel("set epta w:%d hw:%d wc:%d fbit:%x fw:%d\n", wlan_duration, hw_epta_enable,
+		   wlan_duration_cfg, epta_freeze_bitmap, epta_freezed_wlan_duration_cfg);
 
 	if (wlan_duration_cfg == wlan_duration && bt_duration_cfg == bt_duration && hw_epta_enable_cfg == hw_epta_enable) {
 		bes_devel("same epta params\n");
