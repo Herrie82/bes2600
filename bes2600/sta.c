@@ -2549,6 +2549,7 @@ void bes2600_unjoin_work(struct work_struct *work)
 		/* Unjoin is a reset. */
 		wsm_flush_tx(hw_priv);
 		WARN_ON(wsm_keep_alive_period(hw_priv, 0, priv->if_id));
+		bes_warn("[STA] unjoin: sending reset to firmware\n");
 		WARN_ON(wsm_reset(hw_priv, &reset, priv->if_id));
 		WARN_ON(wsm_set_output_power(hw_priv,
 			hw_priv->output_power * 10, priv->if_id));

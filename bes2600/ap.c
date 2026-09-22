@@ -648,6 +648,11 @@ void bes2600_bss_info_changed(struct ieee80211_hw *dev,
 			 * itself -- the same handshake bes2600_remove_interface()
 			 * uses.
 			 */
+			bes_warn("[STA] disassociated, join_status %d%s\n",
+				 priv->join_status,
+				 priv->join_status == BES2600_JOIN_STATUS_STA ?
+				 " -> unjoin" : " -> nothing to unjoin");
+
 			if (priv->join_status == BES2600_JOIN_STATUS_STA) {
 				wsm_lock_tx(hw_priv);
 				if (queue_work(hw_priv->workqueue,
