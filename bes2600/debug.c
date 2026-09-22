@@ -14,6 +14,7 @@
 #include <linux/seq_file.h>
 #include "bes2600.h"
 #include "debug.h"
+#include "hwio.h"
 #ifdef CONFIG_BES2600_DEBUGFS
 /* join_status */
 static const char * const bes2600_debug_join_status[] = {
@@ -563,6 +564,75 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
 	return count;
 }
 
+/*
+ * mem_probe - read the chip's own memory over SDIO.
+ *
+ * The JOIN handler that refuses our requests lives in the chip's ROM, which is
+ * not in any firmware file we have: best2002_fw_sdio.bin is a patch image over
+ * that ROM and patches only fifteen functions, none of them JOIN.  Without the
+ * ROM there is nothing to disassemble.
+ *
+ * bes2600_indirect_read() can fetch it.  It is inherited from cw1200 and is
+ * dead code here -- nothing in the driver calls it -- so whether these
+ * ST90TDS registers still do anything on BES2600 silicon is a question only
+ * the hardware can answer.  Hence a probe rather than a dumper.
+ *
+ *   echo "20000168 100" > .../mem_probe   read 0x100 bytes from 0x20000168
+ *
+ * Start there: that is where the host loaded the firmware, so the first
+ * bytes read back should be the file's own, which makes it a positive
+ * control for the whole path.  A dump of something else, or of nothing,
+ * means the window is not wired up on this part and the idea is dead.
+ */
+#define BES2600_MEM_PROBE_MAX	1024
+
+static ssize_t bes2600_mem_probe_write(struct file *file,
+	const char __user *user_buf, size_t count, loff_t *ppos)
+{
+	char buf[32];
+	unsigned int addr, len;
+	void *data;
+	int ret;
+
+	if (count == 0 || count >= sizeof(buf))
+		return -EINVAL;
+	if (copy_from_user(buf, user_buf, count))
+		return -EFAULT;
+	buf[count] = '\0';
+
+	if (sscanf(buf, "%x %x", &addr, &len) != 2)
+		return -EINVAL;
+	if (!len || len > BES2600_MEM_PROBE_MAX)
+		return -EINVAL;
+	/* The window reads words, and the address register takes a word
+	 * address, so keep both aligned rather than silently truncating. */
+	if (addr & 3 || len & 3)
+		return -EINVAL;
+
+	data = kzalloc(len, GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
+	ret = bes2600_apb_read(addr, data, len);
+	if (ret) {
+		bes_info("mem_probe: read 0x%08x len %u FAILED (%d)\n",
+			 addr, len, ret);
+	} else {
+		bes_info("mem_probe: 0x%08x len %u:\n", addr, len);
+		print_hex_dump(KERN_INFO, "mem_probe: ", DUMP_PREFIX_OFFSET,
+			       16, 1, data, len, false);
+	}
+
+	kfree(data);
+	return count;
+}
+
+static const struct file_operations fops_mem_probe = {
+	.open = bes2600_generic_open,
+	.write = bes2600_mem_probe_write,
+	.llseek = default_llseek,
+};
+
 static const struct file_operations fops_mib_probe = {
 	.open = bes2600_generic_open,
 	.write = bes2600_mib_probe_write,
@@ -597,6 +667,10 @@ int bes2600_debug_init_common(struct bes2600_common *hw_priv)
 
 	if (!debugfs_create_file("mib_probe", S_IWUSR, d->debugfs_phy,
 			hw_priv, &fops_mib_probe))
+		goto err;
+
+	if (!debugfs_create_file("mem_probe", S_IWUSR, d->debugfs_phy,
+			hw_priv, &fops_mem_probe))
 		goto err;
 
 	if (!debugfs_create_file("wsm_dumps", S_IWUSR, d->debugfs_phy,
