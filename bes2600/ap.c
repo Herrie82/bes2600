@@ -1189,6 +1189,18 @@ int bes2600_ampdu_action(struct ieee80211_hw *hw,
 {
 	/* Aggregation is implemented fully in firmware,
 	 * including block ack negotiation.
+	 *
+	 * Verified rather than assumed, because returning -ENOTSUPP for
+	 * TX_START looks like a missing feature and was suspected of capping
+	 * throughput.  The driver's own counters say otherwise: across a 50MB
+	 * download the per-vif status file moved
+	 *
+	 *   TXed +15297   AGG TXed +15297   (100% aggregated)
+	 *   RXed +38504   AGG RXed +36249   ( 94% aggregated)
+	 *
+	 * so the firmware really is running block ack in both directions
+	 * without mac80211 ever asking.  Whatever limits throughput on this
+	 * part, it is not missing aggregation.
 	 * In case of AMPDU aggregation in RX direction
 	 * re-ordering of packets takes place on host. mac80211
 	 * needs the ADDBA Request to setup reodering.mac80211 also
