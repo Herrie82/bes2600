@@ -44,6 +44,25 @@
 
 #include "txrx_opt.h"
 
+/*
+ * JOIN carries probeForJoin, which makes the firmware send a probe request and
+ * wait for the response before it will consider itself synchronised with the
+ * AP.  That is an over-the-air dependency inside a command whose failure costs
+ * the whole association, and the refusals seen on a PineTab2 track signal
+ * strength: three in a single run at -55 dBm, none at all across fifteen
+ * associations at -35 to -39 dBm, with every field of the request correct
+ * either time.
+ *
+ * Everything the probe would confirm -- BSSID, SSID, beacon interval, DTIM --
+ * is already in the JOIN from the scan results, so it is worth being able to
+ * turn off.  Left on by default; writable at runtime so both settings can be
+ * compared on one boot without reloading the driver.
+ */
+static bool join_probe = true;
+module_param(join_probe, bool, 0644);
+MODULE_PARM_DESC(join_probe,
+	"send a probe request as part of JOIN (default 1); 0 joins using the scan results alone");
+
 #define WEP_ENCRYPT_HDR_SIZE    4
 #define WEP_ENCRYPT_TAIL_SIZE   4
 #define WPA_ENCRYPT_HDR_SIZE    8
@@ -2253,7 +2272,7 @@ void bes2600_join_work(struct work_struct *work)
 			.mode = (bss->capability & WLAN_CAPABILITY_IBSS) ?
 				WSM_JOIN_MODE_IBSS : WSM_JOIN_MODE_BSS,
 			.preambleType = WSM_JOIN_PREAMBLE_SHORT,
-			.probeForJoin = 1,
+			.probeForJoin = join_probe ? 1 : 0,
 			/* dtimPeriod will be updated after association */
 			.dtimPeriod = 1,
 			.beaconInterval = bss->beacon_interval,
