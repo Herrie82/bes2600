@@ -50,3 +50,13 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Firmware reverse-engineering scratch space.
+#
+# Working notes and generated artefacts from picking apart the BES2600
+# firmware patch image while chasing the JOIN refusals: disassembly, the
+# radare2 scripts that produce it, and copies of the vendor blobs themselves.
+# Deliberately not pushed -- the disassembly regenerates from the scripts in
+# a couple of minutes, and the blobs are redistributable only from
+# gitlab.com/pine64-org/bes2600-firmware, not from here.
+fw-analysis/
