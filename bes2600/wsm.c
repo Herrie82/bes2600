@@ -2553,7 +2553,13 @@ int wsm_handle_rx(struct bes2600_common *hw_priv, int id,
 					interface_link_id, &wsm_buf);
 			break;
 		default:
-			//STUB();
+			/*
+			 * Unknown indications were dropped without a trace,
+			 * which is why it was never visible whether this
+			 * firmware sends the join-complete indication that
+			 * mainline cw1200 handles as 0x080F.  Say what arrived.
+			 */
+			bes_warn("unhandled WSM indication 0x%.4X\n", id);
 			break;
 		}
 	} else if (WSM_TO_MCU_CMD_IND_CONDITION(id, ind_confirm_label)) {

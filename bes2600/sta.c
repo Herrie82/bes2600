@@ -2424,6 +2424,46 @@ void bes2600_join_work(struct work_struct *work)
 	if (bss)
 		cfg80211_put_bss(hw_priv->hw->wiphy, bss);
 	wsm_unlock_tx(hw_priv);
+
+	/*
+	 * A refused JOIN has to be reported, not just cleaned up.
+	 *
+	 * JOIN is the synchronisation between AP and STA -- the firmware can
+	 * neither receive nor transmit for a BSS it has not joined.  When the
+	 * firmware rejects it the driver used to drop the frame, cancel the
+	 * join timeout and return quietly, leaving mac80211 with no idea that
+	 * anything had gone wrong.  mac80211 then carried on with the
+	 * association: the auth exchange itself succeeds, because the AP
+	 * answers, and the log reads
+	 *
+	 *   wsm_join_confirm ret 1: ... ch 11 bssid ... (every field correct)
+	 *   wlan0: send auth to ... (try 2/3)
+	 *   wlan0: authenticated
+	 *   wlan0: waiting for beacon from ...
+	 *
+	 * and then stops, because no beacon can arrive through a chip that
+	 * never joined.  The association dies waiting for something that
+	 * cannot come, and only mac80211's own much longer timeout ends it.
+	 *
+	 * Mainline cw1200 gets this right from the other direction: its
+	 * join-complete indication handler calls cw1200_do_unjoin() and then
+	 * ieee80211_connection_loss() whenever the join completed with a
+	 * failure status.  This driver never implemented that indication, so
+	 * do the equivalent here, where the failure is already known
+	 * synchronously.  Reporting it lets mac80211 tear the attempt down and
+	 * start a fresh one instead of waiting on a dead BSS.
+	 *
+	 * Deliberately outside conf_lock: mac80211 may call straight back into
+	 * the driver.  The suspend guard mirrors bes2600_bss_loss_work(),
+	 * which cannot report a loss while the system is going down either.
+	 */
+	if (join_ret) {
+		bes_warn("[STA] JOIN refused, reporting connection loss\n");
+		if (bes2600_suspend_status_get(hw_priv))
+			bes2600_pending_unjoin_set(hw_priv, priv->if_id);
+		else
+			ieee80211_connection_loss(priv->vif);
+	}
 }
 
 void bes2600_join_timeout(struct work_struct *work)
