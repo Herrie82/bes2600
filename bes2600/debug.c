@@ -579,6 +579,18 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
  *
  *   echo "20000168 100" > .../mem_probe   read 0x100 bytes from 0x20000168
  *
+ * The chip's address space, read out of the patch image itself -- the
+ * addresses it calls and the globals it touches:
+ *
+ *   0x20000168  patch code, i.e. best2002_fw_sdio.bin as loaded
+ *   0x60000000  ROM, ~192KB: 710 of the 725 distinct Thumb function
+ *               pointers in the patch image land in 0x60000000-0x6002ffff,
+ *               with a second cluster of 133 around 0x60110000
+ *   0x8001xxxx  RAM globals the patches share with ROM code
+ *
+ * So the JOIN handler is somewhere in 0x60000000, and that is what this is
+ * for once the control below has shown the window works.
+ *
  * Start there: that is where the host loaded the firmware, so the first
  * bytes read back should be the file's own, which makes it a positive
  * control for the whole path.  A dump of something else, or of nothing,
