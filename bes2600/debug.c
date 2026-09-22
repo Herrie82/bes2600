@@ -14,7 +14,6 @@
 #include <linux/seq_file.h>
 #include "bes2600.h"
 #include "debug.h"
-#include "hwio.h"
 #ifdef CONFIG_BES2600_DEBUGFS
 /* join_status */
 static const char * const bes2600_debug_join_status[] = {
@@ -565,85 +564,40 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
 }
 
 /*
- * mem_probe - read the chip's own memory over SDIO.
+ * The chip's ROM is not reachable from the host, and this is where that was
+ * established so nobody spends the effort again.
  *
- * The JOIN handler that refuses our requests lives in the chip's ROM, which is
- * not in any firmware file we have: best2002_fw_sdio.bin is a patch image over
- * that ROM and patches only fifteen functions, none of them JOIN.  Without the
- * ROM there is nothing to disassemble.
+ * The JOIN handler that refuses our requests lives in ROM: best2002_fw_sdio.bin
+ * is a patch image, all four shipped images carry the same fourteen patches,
+ * neither published firmware revision changes that set, and none of them patch
+ * JOIN.  Reading the ROM would settle what it objects to.  Taken from the patch
+ * image itself, the address space is
  *
- * bes2600_indirect_read() can fetch it.  It is inherited from cw1200 and is
- * dead code here -- nothing in the driver calls it -- so whether these
- * ST90TDS registers still do anything on BES2600 silicon is a question only
- * the hardware can answer.  Hence a probe rather than a dumper.
+ *   0x20000168   patch code, i.e. the firmware file as loaded
+ *   0x60000000   ROM, ~192KB (710 of 725 distinct Thumb function pointers land
+ *                in 0x60000000-0x6002ffff, a second cluster of 133 near
+ *                0x60110000)
+ *   0x8001xxxx   RAM globals shared between patch code and ROM code
  *
- *   echo "20000168 100" > .../mem_probe   read 0x100 bytes from 0x20000168
+ * bes2600_indirect_read() in hwio.c looks like the way to read it: set
+ * ST90TDS_SRAM_BASE_ADDR_REG_ID, pulse the prefetch bit, drain
+ * ST90TDS_SRAM_DPORT_REG_ID.  It is inherited from cw1200 and nothing in this
+ * driver has ever called it.
  *
- * The chip's address space, read out of the patch image itself -- the
- * addresses it calls and the globals it touches:
+ * It does not work here, and it is not harmless.  A debugfs probe that called
+ * bes2600_apb_read() blocked inside sdio_claim_host() without printing
+ * anything at all -- not the success path, not either error path -- and on the
+ * second attempt took the device off both USB and WiFi until it was power
+ * cycled.  Nothing reached the log before it went.  The conclusion is that
+ * those ST90TDS registers are not decoded on BES2600 silicon and addressing
+ * them wedges the SDIO bus.
  *
- *   0x20000168  patch code, i.e. best2002_fw_sdio.bin as loaded
- *   0x60000000  ROM, ~192KB: 710 of the 725 distinct Thumb function
- *               pointers in the patch image land in 0x60000000-0x6002ffff,
- *               with a second cluster of 133 around 0x60110000
- *   0x8001xxxx  RAM globals the patches share with ROM code
- *
- * So the JOIN handler is somewhere in 0x60000000, and that is what this is
- * for once the control below has shown the window works.
- *
- * Start there: that is where the host loaded the firmware, so the first
- * bytes read back should be the file's own, which makes it a positive
- * control for the whole path.  A dump of something else, or of nothing,
- * means the window is not wired up on this part and the idea is dead.
+ * So the probe is gone rather than left behind a warning.  If the ROM is ever
+ * worth another attempt, the remaining route is the bootloader: it takes a
+ * RUN_CODE command (FRAME_HEADER_RUN_CODE, 0xB4) and the firmware is
+ * downloaded to RAM on every boot, so a stub that copies ROM somewhere the
+ * host already reads back costs a power cycle if it is wrong.
  */
-#define BES2600_MEM_PROBE_MAX	1024
-
-static ssize_t bes2600_mem_probe_write(struct file *file,
-	const char __user *user_buf, size_t count, loff_t *ppos)
-{
-	char buf[32];
-	unsigned int addr, len;
-	void *data;
-	int ret;
-
-	if (count == 0 || count >= sizeof(buf))
-		return -EINVAL;
-	if (copy_from_user(buf, user_buf, count))
-		return -EFAULT;
-	buf[count] = '\0';
-
-	if (sscanf(buf, "%x %x", &addr, &len) != 2)
-		return -EINVAL;
-	if (!len || len > BES2600_MEM_PROBE_MAX)
-		return -EINVAL;
-	/* The window reads words, and the address register takes a word
-	 * address, so keep both aligned rather than silently truncating. */
-	if (addr & 3 || len & 3)
-		return -EINVAL;
-
-	data = kzalloc(len, GFP_KERNEL);
-	if (!data)
-		return -ENOMEM;
-
-	ret = bes2600_apb_read(addr, data, len);
-	if (ret) {
-		bes_info("mem_probe: read 0x%08x len %u FAILED (%d)\n",
-			 addr, len, ret);
-	} else {
-		bes_info("mem_probe: 0x%08x len %u:\n", addr, len);
-		print_hex_dump(KERN_INFO, "mem_probe: ", DUMP_PREFIX_OFFSET,
-			       16, 1, data, len, false);
-	}
-
-	kfree(data);
-	return count;
-}
-
-static const struct file_operations fops_mem_probe = {
-	.open = bes2600_generic_open,
-	.write = bes2600_mem_probe_write,
-	.llseek = default_llseek,
-};
 
 static const struct file_operations fops_mib_probe = {
 	.open = bes2600_generic_open,
@@ -679,10 +633,6 @@ int bes2600_debug_init_common(struct bes2600_common *hw_priv)
 
 	if (!debugfs_create_file("mib_probe", S_IWUSR, d->debugfs_phy,
 			hw_priv, &fops_mib_probe))
-		goto err;
-
-	if (!debugfs_create_file("mem_probe", S_IWUSR, d->debugfs_phy,
-			hw_priv, &fops_mem_probe))
 		goto err;
 
 	if (!debugfs_create_file("wsm_dumps", S_IWUSR, d->debugfs_phy,
