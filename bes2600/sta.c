@@ -2375,6 +2375,38 @@ void bes2600_join_work(struct work_struct *work)
 		channel.newChannelNumber = conf->chandef.chan->hw_value;
 		wsm_switch_channel(hw_priv, &channel,  priv->if_id);
 
+		/*
+		 * ...and wait for the firmware to say it has, which the
+		 * comment above asks for but nothing enforced.
+		 *
+		 * wsm_switch_channel() only queues the command: it sets
+		 * channel_switch_in_progress, and the firmware clears it much
+		 * later with a channel-switch indication that wakes
+		 * channel_switch_done.  That waitqueue had no waiters at all,
+		 * so JOIN went out roughly 7ms behind the switch -- the gap is
+		 * just the probe template below -- while the radio could still
+		 * be retuning.  A JOIN issued mid-retune is refused with every
+		 * field of the request correct, which is exactly the failure
+		 * seen on a PineTab2: intermittent, no pattern in the request,
+		 * and unaffected by resetting the firmware beforehand.
+		 *
+		 * The indication is handled on the bes2600_bh kthread, not on
+		 * the workqueue this runs on, so waiting here cannot deadlock
+		 * against the thing it waits for.  The timeout is a backstop:
+		 * if the indication never arrives, carry on and let the JOIN
+		 * fail as it did before rather than stall the connect.
+		 */
+		if (hw_priv->channel_switch_in_progress) {
+			long left = wait_event_timeout(hw_priv->channel_switch_done,
+					!hw_priv->channel_switch_in_progress,
+					msecs_to_jiffies(BES2600_CHANNEL_SWITCH_TMO));
+
+			if (!left)
+				bes_warn("[STA] channel switch to %d did not complete in %dms, joining anyway\n",
+					 channel.newChannelNumber,
+					 BES2600_CHANNEL_SWITCH_TMO);
+		}
+
 		/* avoid lmac assert when wpa_supplicant connect to ap without scan */
 		probe_tmp.skb = ieee80211_probereq_get(hw_priv->hw, priv->vif->addr, NULL, 0, 0);
 		if (probe_tmp.skb) {

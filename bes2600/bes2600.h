@@ -306,6 +306,13 @@ struct ip_alive_cfg {
 };
 #endif /* CONFIG_BES2600_KEEP_ALIVE */
 
+/*
+ * How long bes2600_join_work() will wait for the firmware to confirm a channel
+ * switch before issuing JOIN.  Switches complete in a few milliseconds; this is
+ * only a backstop against a missing indication.
+ */
+#define BES2600_CHANNEL_SWITCH_TMO	200
+
 struct bes2600_common {
 	struct bes2600_debug_common	*debug;
 	struct bes2600_queue		tx_queue[4];
