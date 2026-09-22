@@ -1165,10 +1165,25 @@ int wsm_epta_cmd(struct bes2600_common *hw_priv, struct wsm_epta_msg *arg)
 	 * coex_set_epta_params(), so instrumenting that function showed
 	 * nothing at all over a whole boot.
 	 *
-	 * Warn rather than debug.  Devel logs are off in normal builds, which
-	 * is why the airtime split has never been visible, and the question it
-	 * answers is whether WiFi really is left with 20000us of each 102400us
-	 * period while it is moving data.
+	 * It answered the question it was added for, in the negative.  Over a
+	 * boot and four 50MB downloads the firmware is told:
+	 *
+	 *   epta cmd: wlan:102400 bt:0 enable:0     (x2, bring-up)
+	 *   epta cmd: wlan:20000 bt:80000 enable:0  (once, during connect)
+	 *   epta cmd: wlan:102400 bt:0 enable:0
+	 *   epta cmd: wlan:102400 bt:0 enable:3     (x2)
+	 *   epta cmd: wlan:102400 bt:0 enable:0     (final)
+	 *
+	 * and then nothing at all while data moves -- zero further commands
+	 * across four transfers.  WiFi ends up with the whole 102400us period
+	 * and Bluetooth with none of it.  The 20000/80000 split that
+	 * coex_set_wifi_conn() asks for on EPTA_STATE_WIFI_GOT_IP appears once
+	 * in passing and is overwritten before any traffic flows, so coex
+	 * airtime is not what limits throughput here.
+	 *
+	 * Kept anyway: it is one line, it is off in normal builds only because
+	 * bes_warn is cheap enough to leave on, and it turns "is coex starving
+	 * WiFi" from an argument into a grep.
 	 */
 	bes_warn("epta cmd: wlan:%d bt:%d enable:%x\n",
 		 arg->wlan_duration, arg->bt_duration, arg->hw_epta_enable);
