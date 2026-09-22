@@ -1821,6 +1821,38 @@ void bes2600_rx_cb(struct bes2600_vif *priv,
 			hdr->band);
 
 	if (arg->rxedRate >= 14) {
+		/*
+		 * The rate table stops at WSM_TRANSMIT_RATE_HT_65, i.e. MCS7 at
+		 * HT20 with a long guard interval, so rxedRate alone cannot say
+		 * whether a frame arrived 40MHz or short GI.  Nothing here ever
+		 * set RX_ENC_FLAG_40MHZ or RX_ENC_FLAG_SHORT_GI, so iw computes
+		 * the HT20 long-GI rate for whatever MCS came back and reports
+		 * 65 Mbit/s for MCS7 no matter how the frame really arrived --
+		 * which is why a link transmitting at 150 Mbit/s 40MHz short GI
+		 * shows a 65 Mbit/s receive rate and looks badly asymmetric.
+		 *
+		 * If the firmware reports width and guard interval at all it
+		 * must be in the upper bits of the status word: the highest bit
+		 * this driver names is WSM_RX_STATUS_GROUP_KEY, BIT(19).  Log
+		 * anything above that once so the encoding can be identified
+		 * rather than guessed at.
+		 *
+		 * The whole lineage has this hole -- mainline cw1200 and the
+		 * DanctNIX bes2600 carry the identical three lines -- so it
+		 * came from the original ST-Ericsson driver and nobody has
+		 * needed the receive rate to be accurate since.  There is
+		 * therefore no upstream to copy the answer from.
+		 */
+		if (unlikely(arg->flags & ~0xFFFFFu)) {
+			static bool once;
+
+			if (!once) {
+				once = true;
+				bes_warn("rx: unknown status bits 0x%08x (rate %u) -- may carry 40MHz/SGI\n",
+					 arg->flags & ~0xFFFFFu, arg->rxedRate);
+			}
+		}
+
 		hdr->encoding |= RX_ENC_HT;
 		hdr->rate_idx = arg->rxedRate - 14;
 	} else if (arg->rxedRate >= 4) {
