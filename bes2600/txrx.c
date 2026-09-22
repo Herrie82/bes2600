@@ -87,6 +87,49 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
         }
 }
 
+/*
+ * Retry policy, and what 2.4GHz throughput is actually limited by.
+ *
+ * Measured on a PineTab2 at -40 dBm with an idle CPU: a 50MB download runs at
+ * about 12 Mbit/s while the station reports 75% tx retries and only 3 tx
+ * failures, with the rate pinned at MCS7 throughout. That combination -- huge
+ * retry counts, almost no failures, no rate backoff -- is what an 802.11 link
+ * looks like when retries are succeeding, not when the policy is wrong.
+ *
+ * The things that looked like candidates were all checked and are not it:
+ *
+ *  - BES2600_TX_MORE_RETRY, which rewrites the rate table to six attempts per
+ *    rate, is not compiled in (it is not even defined in the Makefile).
+ *  - BES2600_TX_RX_OPT, which would raise the retry limits to 31/31, is not
+ *    defined either, so the limits are the ordinary 7/15 and mac80211 sets
+ *    short=7.
+ *  - The firmware aggregates in both directions: a 50MB download moved
+ *    AGG TXed by 15297 of 15297 frames and AGG RXed by 36249 of 38504.
+ *  - Coex leaves WiFi the whole TDD period (wlan:102400 bt:0) and sends no
+ *    further airtime commands while data moves.
+ *
+ * The association is HT20, because the AP asks for it -- "secondary channel
+ * offset: no", "STA channel width: 20" -- but that is not the explanation on
+ * its own. MCS7 HT20 short GI is 72.2 Mbit/s of PHY rate, and a healthy link
+ * at that rate carries 35-45 Mbit/s of TCP, which would saturate the 34.5
+ * Mbit/s this WAN actually provides. 12 Mbit/s is about 17% efficiency.
+ *
+ * The retry rate is the anomaly, and moving the same device to a different AP
+ * shows it is not the driver's doing. On a 5GHz 40MHz association with the
+ * same firmware, same driver and a worse signal:
+ *
+ *              2.4GHz HT20 (-40 dBm)     5GHz HT40 (-53 dBm)
+ *   retries    46-75%                    13-18%
+ *   throughput 11-13 Mbit/s              17-19 Mbit/s
+ *
+ * Retries fall by a factor of four and throughput rises by half, on a weaker
+ * signal. Whatever costs 75% of transmissions on that 2.4GHz channel is in
+ * the air rather than in this file -- eleven other APs share the band there,
+ * four of them on the same channel. Nothing here needs changing for it.
+ *
+ * Both numbers are still short of the 34.5 Mbit/s the WAN provides, so
+ * something else is also in the way, but it is not the retry policy.
+ */
 static int tx_policy_build(const struct bes2600_common *hw_priv,
 	/* [out] */ struct tx_policy *policy,
 	struct ieee80211_tx_rate *rates, size_t count)
