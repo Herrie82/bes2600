@@ -1153,8 +1153,22 @@ int wsm_epta_cmd(struct bes2600_common *hw_priv, struct wsm_epta_msg *arg)
 	struct wsm_buf *buf = &hw_priv->wsm_cmd_buf;
 	static bool epta_lock_tx = false;
 
-	/* Diagnostic: say nothing to the arbiter at all. */
+	/*
+	 * Diagnostic: say nothing to the arbiter at all.
+	 *
+	 * This function owns a TX lock through the static above -- it locks
+	 * when asked for a zero WiFi duration and unlocks when a non-zero one
+	 * arrives -- so returning early has to hand that lock back.  Skipping
+	 * it left TX locked with nothing able to release it, and the first
+	 * sweep that enabled this took the device out for every arm after it:
+	 * no associations and, tellingly, no JOIN refusals either, because no
+	 * JOIN could be sent at all.
+	 */
 	if (coex_epta_is_muted()) {
+		if (epta_lock_tx) {
+			wsm_unlock_tx(hw_priv);
+			epta_lock_tx = false;
+		}
 		bes_warn("epta cmd suppressed (coex_epta_mute): wlan:%u bt:%u enable:%u\n",
 			 arg->wlan_duration, arg->bt_duration, arg->hw_epta_enable);
 		return 0;
