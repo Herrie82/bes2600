@@ -95,10 +95,26 @@ module_param(join_pre_delay_ms, int, 0644);
 MODULE_PARM_DESC(join_pre_delay_ms,
 	"delay in ms between the pre-JOIN MIB writes and JOIN (default 0)");
 
-static int join_retry;
+/*
+ * join_retry is no longer only a diagnostic.
+ *
+ * Asked to re-send a refused JOIN unchanged, the firmware accepted it four
+ * times in a single eight-connect run -- same mode, band, channel, BSSID,
+ * SSID, DTIM, beacon interval and basic rates, about 20ms later.  Nothing
+ * about the request differs between the refusal and the acceptance, so the
+ * refusal is transient state inside the chip and not anything this driver
+ * sends.  That is why every request-side theory tested against this failure
+ * came back negative: the request was never wrong.
+ *
+ * Retrying is also strictly better than what happened before, which was to
+ * report connection loss on the first refusal and let mac80211 spend its
+ * three authentication attempts, roughly 130ms apart, on a chip that would
+ * very likely have said yes to the second ask immediately.
+ */
+static int join_retry = 3;
 module_param(join_retry, int, 0644);
 MODULE_PARM_DESC(join_retry,
-	"retry a refused JOIN this many times (default 0)");
+	"re-send a refused JOIN this many times before giving up (default 3)");
 
 #define WEP_ENCRYPT_HDR_SIZE    4
 #define WEP_ENCRYPT_TAIL_SIZE   4
@@ -2552,10 +2568,10 @@ void bes2600_join_work(struct work_struct *work)
 		join_ret = wsm_join(hw_priv, &join, priv->if_id);
 
 		/*
-		 * Diagnostic: would the firmware take the same request a
-		 * moment later?  Nothing about the request changes between
-		 * attempts, so an accept on retry means the refusal is a
-		 * transient state in the chip rather than anything we sent.
+		 * A refused JOIN is worth asking again.  The request does not
+		 * change between attempts, and the firmware accepts it often
+		 * enough on the second ask that giving up on the first costs
+		 * an association for nothing.
 		 */
 		if (join_ret && join_retry > 0) {
 			int tries = min(join_retry, 5);

@@ -35,8 +35,16 @@ static bool coex_fdd_mode;  /* fdd or fdd hybrid */
  *
  *   echo 1 > /sys/module/bes2600/parameters/coex_force_fdd
  *
- * If the refusals stop, coexistence is the cause.  If they do not, it is not,
- * and this comes out again.  It defaults off and changes nothing unless set.
+ * Tested, and the answer is no.  Forcing FDD associated 6 of 8 against a
+ * control's 6 of 8 in the run where the two sat close together, and looked
+ * worse in two earlier runs.  Muting the arbiter outright is actively harmful:
+ * coex_epta_mute scored 0 of 8 while the arms either side of it scored 5 and
+ * 6, so that is not drift -- the firmware needs to be told about airtime, and
+ * coexistence is a requirement here rather than the cause of anything.
+ *
+ * The refusal turned out to be transient chip state; see the note on
+ * join_retry in sta.c.  These gates stay because they are cheap and they are
+ * what ruled coexistence out.
  */
 static bool coex_force_fdd;
 module_param(coex_force_fdd, bool, 0644);
