@@ -10,6 +10,7 @@
  */
 #include <linux/types.h>
 #include <linux/version.h>
+#include <linux/moduleparam.h>
 
 #include "bes2600.h"
 #include "epta_coex.h"
@@ -18,6 +19,29 @@
 
 static bool coex_ps_en;
 static bool coex_fdd_mode;  /* fdd or fdd hybrid */
+
+/*
+ * coex_force_fdd - test instrument, not a fix.
+ *
+ * JOIN refusals are 2.4GHz-only: across 44 connect attempts on two builds,
+ * 5GHz associated 24 of 24 times and refused nothing, while 2.4GHz sat around
+ * half and produced every refusal seen, each with a correct request.  The one
+ * thing that is 2.4GHz-only in this driver is Bluetooth coexistence:
+ * coex_rssi_update() below puts channels above 14 into FDD, where WiFi and BT
+ * do not share the air, and leaves 2.4GHz in TDD splitting a 102400us period.
+ *
+ * Setting this makes 2.4GHz take the FDD path too, so the hypothesis can be
+ * tested without waiting for a band change:
+ *
+ *   echo 1 > /sys/module/bes2600/parameters/coex_force_fdd
+ *
+ * If the refusals stop, coexistence is the cause.  If they do not, it is not,
+ * and this comes out again.  It defaults off and changes nothing unless set.
+ */
+static bool coex_force_fdd;
+module_param(coex_force_fdd, bool, 0644);
+MODULE_PARM_DESC(coex_force_fdd,
+	"force FDD coexistence on 2.4GHz as well (diagnostic)");
 static uint8_t epta_conn_state; /* dafault invalid stat */
 static uint32_t epta_freeze_bitmap;  /*bit0: conn, bit1: tp, bit2: tts */
 static int epta_freezed_wlan_duration[EPTA_FREEZE_MAX] = {0};
@@ -480,7 +504,7 @@ void coex_rssi_update(struct bes2600_common *hw_priv, int rssi, int channel, int
 
 		bes_devel("coex_rssi_update rssi:%d, ch:%d, con:%d\n",
 			rssi, channel, connected);
-		if (channel > 14) {
+		if (channel > 14 || coex_force_fdd) {
 			fdd_en = 1;
 		///TODO: HYBRID mode
 		// } else if (rssi >= COEX_FDD_RSSI_THR) {

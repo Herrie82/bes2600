@@ -2442,13 +2442,22 @@ void bes2600_join_work(struct work_struct *work)
 		 * 0x7, scan_in_progress 0.  It is 2.4GHz specific and roughly
 		 * a coin flip, while 5GHz has not refused once.
 		 *
+		 * Moving the switch to bes2600_config() did not change this.
+		 * Repeating the same 22 attempts per band on the build with
+		 * the switch moved: 2.4GHz went 9/22 against 14/22 before,
+		 * refusals 34 against 43, which is z = 1.55 -- noise, in both
+		 * directions at once.  5GHz stayed 12/12 with no channel
+		 * switch timeouts and no channel mismatches, so the move is
+		 * sound and the JOIN refusal simply was not what it fixed.
+		 *
 		 * The one thing that is 2.4GHz-only in this driver is
 		 * Bluetooth coexistence: coex_rssi_update() puts channels
 		 * above 14 into FDD, where WiFi and BT do not share the air,
 		 * and leaves 2.4GHz in TDD, where they split a 102400us
-		 * period.  That is the shape of the failure and the next thing
-		 * to test -- see the note in epta_coex.c about the airtime
-		 * split this driver asks for while Bluetooth is down.
+		 * period.  That is the shape of the failure, and epta_coex.c
+		 * now carries a coex_force_fdd module parameter to test it
+		 * directly -- see the note there, and the one about the
+		 * airtime split this driver asks for while Bluetooth is down.
 		 */
 
 		/* avoid lmac assert when wpa_supplicant connect to ap without scan */
