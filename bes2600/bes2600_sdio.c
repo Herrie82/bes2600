@@ -106,6 +106,23 @@ struct sbus_priv {
 	u32 rx_retry_cnt;
 	u32 rx_retry_hit[BES2600_RX_RETRY_MAX + 1];
 	u32 rx_retry_miss_cnt;
+	/*
+	 * sdio_rx_work() is queued from three places and only one of them
+	 * knows the chip has something to say: the SDIO interrupt.  The other
+	 * two are speculative -- after every TX scatter write, and when the
+	 * RX queue dequeues empty with buffers still outstanding.  Count each
+	 * source, and how many invocations moved no data at all, so the cost
+	 * of guessing can be told from the cost of being told.
+	 *
+	 * queue_work() on an already-pending work item does nothing, so the
+	 * three sched counters add up to more than rx_work_cnt; the gap is how
+	 * much the speculative queueing is already being absorbed for free.
+	 */
+	u32 rx_sched_irq_cnt;
+	u32 rx_sched_tx_cnt;
+	u32 rx_sched_deq_cnt;
+	u32 rx_work_cnt;
+	u32 rx_work_empty_cnt;
 	long unsigned int last_irq_timestamp;
 	long unsigned int last_rx_data_timestamp;
 #endif
@@ -437,6 +454,7 @@ static void bes2600_sdio_irq_handler(struct sdio_func *func)
 	bes_devel("%s called, fw_started:%d \n",
 			 __func__, self->fw_started);
 	if (likely(self->fw_started && self->core)) {
+		self->rx_sched_irq_cnt++;
 		queue_work(self->sdio_wq, &self->rx_work);
 		self->last_irq_timestamp = jiffies;
 	} else if(self->irq_handler) {
@@ -643,6 +661,10 @@ void sdio_work_debug(struct sbus_priv *self)
 	bes_err("%s rx ctrl: total=%u continuous=%u xfer=%u remain=%u zero=%u last=%x(%x) next=%d\n", __func__,
 			self->rx_total_ctrl_cnt, self->rx_continuous_ctrl_cnt, self->rx_xfer_cnt, self->rx_remain_ctrl_cnt, self->rx_zero_ctrl_cnt,
 			self->rx_last_ctrl, self->rx_valid_ctrl, self->next_toggle);
+	bes_err("%s rx work: runs=%u empty=%u sched irq=%u tx=%u deq=%u\n",
+			__func__, self->rx_work_cnt, self->rx_work_empty_cnt,
+			self->rx_sched_irq_cnt, self->rx_sched_tx_cnt,
+			self->rx_sched_deq_cnt);
 	bes_err("%s rx retry: taken=%u miss=%u zero=%u zero_stop=%u hit=%u/%u/%u/%u/%u/%u/%u\n",
 			__func__, self->rx_retry_cnt, self->rx_retry_miss_cnt,
 			self->rx_zero_ctrl_cnt, self->rx_zero_stop_cnt,
@@ -912,10 +934,14 @@ static void sdio_rx_work(struct work_struct *work)
 	int total_len;
 	struct sbus_priv *self = container_of(work, struct sbus_priv, rx_work);
 	u8 *buf = self->rx_buffer;
+	u32 xfer_at_entry;
 
 	/* don't read/write sdio when sdio error */
 	if (bes2600_chrdev_is_bus_error())
 		return;
+
+	self->rx_work_cnt++;
+	xfer_at_entry = self->rx_xfer_cnt;
 
 	bes2600_gpio_wakeup_mcu(self, GPIO_WAKE_FLAG_SDIO_RX);
 
@@ -995,6 +1021,9 @@ static void sdio_rx_work(struct work_struct *work)
 
 	} while (again);
 
+	if (self->rx_xfer_cnt == xfer_at_entry)
+		self->rx_work_empty_cnt++;
+
 	bes2600_gpio_allow_mcu_sleep(self, GPIO_WAKE_FLAG_SDIO_RX);
 	return;
 
@@ -1025,8 +1054,10 @@ static void *bes2600_sdio_pipe_read(struct sbus_priv *self)
 	if (likely(self->fw_started == true &&
 		!bes2600_pwr_device_is_idle(self->core) &&
 		self->core->hw_bufs_used > 0))
-		if (!skb)
+		if (!skb) {
+			self->rx_sched_deq_cnt++;
 			queue_work(self->sdio_wq, &self->rx_work);
+		}
 	return skb;
 }
 
@@ -1265,6 +1296,7 @@ flush_previous:
 				}
 			} while (crc_retry <= 10);
 			sdio_release_host(self->func);
+			self->rx_sched_tx_cnt++;
 			queue_work(self->sdio_wq, &self->rx_work);
 			if (ret) {
 				bes_err("%s,%d err=%d,%d,%d\n", __func__, __LINE__, ret, scatters, cur_blk);
@@ -1665,6 +1697,11 @@ static void bes2600_sdio_empty_work(struct sbus_priv *self)
 	self->rx_zero_stop_cnt = 0;
 	self->rx_retry_cnt = 0;
 	self->rx_retry_miss_cnt = 0;
+	self->rx_sched_irq_cnt = 0;
+	self->rx_sched_tx_cnt = 0;
+	self->rx_sched_deq_cnt = 0;
+	self->rx_work_cnt = 0;
+	self->rx_work_empty_cnt = 0;
 	memset(self->rx_retry_hit, 0, sizeof(self->rx_retry_hit));
 	self->rx_data_cnt = 0;
 	self->rx_xfer_cnt = 0;
