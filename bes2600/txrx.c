@@ -1844,12 +1844,22 @@ void bes2600_rx_cb(struct bes2600_vif *priv,
 		 * therefore no upstream to copy the answer from.
 		 */
 		if (unlikely(arg->flags & ~0xFFFFFu)) {
-			static bool once;
+			static u32 seen_combos[16];
+			static unsigned n_combos;
+			u32 hi = arg->flags & ~0xFFFFFu;
+			u32 combo = hi | arg->rxedRate;
+			unsigned i;
 
-			if (!once) {
-				once = true;
-				bes_warn("rx: unknown status bits 0x%08x (rate %u) -- may carry 40MHz/SGI\n",
-					 arg->flags & ~0xFFFFFu, arg->rxedRate);
+			/* One line per distinct (upper bits, rate) pair: the
+			 * mapping only becomes readable once several rates have
+			 * been seen, and a line per frame would bury it. */
+			for (i = 0; i < n_combos; i++)
+				if (seen_combos[i] == combo)
+					break;
+			if (i == n_combos && n_combos < ARRAY_SIZE(seen_combos)) {
+				seen_combos[n_combos++] = combo;
+				bes_warn("rx: status hi 0x%08x rate %u (mcs %u)\n",
+					 hi, arg->rxedRate, arg->rxedRate - 14);
 			}
 		}
 
