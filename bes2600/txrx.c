@@ -118,17 +118,19 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  * shows it is not the driver's doing. On a 5GHz 40MHz association with the
  * same firmware, same driver and a worse signal:
  *
- *              2.4GHz HT20 (-40 dBm)     5GHz HT40 (-53 dBm)
- *   retries    46-75%                    13-18%
- *   throughput 11-13 Mbit/s              17-19 Mbit/s
+ *   association                signal    retries    throughput
+ *   2.4GHz HT20 (ch 11)        -40 dBm   46-75%     9-13 Mbit/s
+ *   5GHz HT40 (ch 44)          -53 dBm   13-18%     17-19 Mbit/s
+ *   5GHz HT40 (ch 52)          -54 dBm    7-8%      18-20 Mbit/s
  *
- * Retries fall by a factor of four and throughput rises by half, on a weaker
- * signal. Whatever costs 75% of transmissions on that 2.4GHz channel is in
- * the air rather than in this file -- eleven other APs share the band there,
- * four of them on the same channel. Nothing here needs changing for it.
+ * Retries fall by an order of magnitude and throughput nearly doubles as the
+ * signal gets worse, which is the opposite of what a driver-side retry
+ * problem would do. What costs 75% of transmissions on 2.4GHz is the air --
+ * eleven APs share that band here, four of them on the same channel -- and
+ * nothing in this file has any bearing on it.
  *
- * Both numbers are still short of the 34.5 Mbit/s the WAN provides, so
- * something else is also in the way, but it is not the retry policy.
+ * All three are short of the 34.5 Mbit/s the WAN provides, so something else
+ * is in the way too. It is not the retry policy.
  */
 static int tx_policy_build(const struct bes2600_common *hw_priv,
 	/* [out] */ struct tx_policy *policy,
