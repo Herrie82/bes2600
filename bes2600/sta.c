@@ -105,20 +105,32 @@ MODULE_PARM_DESC(join_pre_delay_ms,
  * so the refusal is transient state inside the chip rather than anything this
  * driver sends, which is why every request-side theory came back negative.
  *
- * Retrying at 20ms does not clear it, though.  Interleaving the two settings
- * attempt by attempt, so that both saw the same device degradation, gave 5 of
- * 8 associations with three retries against 6 of 8 with none, and only 3 of
- * 22 refusals were overturned.  The logs say why: a refused JOIN is usually
- * still refused 20, 40 and 60ms later, and those three attempts spend time
- * out of the authentication budget mac80211 is holding, so
- * "authentication ... timed out" arrives sooner than it otherwise would.
+ * Retrying does not clear it, and the reason is that the refusal is sticky.
  *
- * What does eventually succeed is mac80211's own retry, a full authenticate
- * cycle 130ms or more later.  So the state clears somewhere above 60ms, and a
- * useful in-driver retry would have to wait long enough to outlast it without
- * blocking the workqueue past the auth timeout.  join_retry_delay_ms exists
- * to find that number without another build; until it is found, the default
- * of 0 keeps the old behaviour, which measured better.
+ * Counting refusals per connect over 16 attempts: of the 11 connects that saw
+ * any refusal at all, 8 had all three of mac80211's authentication tries
+ * refused.  The per-attempt refusal rate was 0.58, so independent attempts
+ * would put all-three-refused at 0.20 -- about 3 of 16, against 8 observed.
+ * Once the chip starts refusing it keeps refusing for the whole authentication
+ * budget, roughly half a second, and the retries mac80211 issues 160-175ms
+ * apart fail together.
+ *
+ * That kills the in-driver retry outright rather than just at 20ms.  An
+ * interleaved A/B -- alternating the setting attempt by attempt so both arms
+ * saw the same device degradation -- gave 5 of 8 associations with three
+ * retries against 6 of 8 with none, overturning only 3 of 22 refusals.  Any
+ * delay short enough to sit inside bes2600_join_work() is inside the sticky
+ * window, and a delay long enough to outlast it would block the workqueue
+ * past the timeout it is trying to beat.
+ *
+ * It is also not the coexistence TDD period, which would have been the tidy
+ * answer: that period is 102400us, and two retries 175.5ms and 160.5ms apart
+ * land in different phases of it, so one should have succeeded.  Both were
+ * refused.
+ *
+ * So the question is no longer "how long to wait" but "what puts the chip in
+ * this state", and the answer is somewhere before the JOIN.  join_retry and
+ * join_retry_delay_ms stay as diagnostics, defaulted off.
  */
 static int join_retry;
 module_param(join_retry, int, 0644);
