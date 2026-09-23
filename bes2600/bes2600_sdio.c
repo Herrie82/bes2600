@@ -117,6 +117,27 @@ struct sbus_priv {
 	 * queue_work() on an already-pending work item does nothing, so the
 	 * three sched counters add up to more than rx_work_cnt; the gap is how
 	 * much the speculative queueing is already being absorbed for free.
+	 *
+	 * Measured over an eleven second load sample:
+	 *
+	 *   runs 22543, of which 15337 (68%) moved no data at all
+	 *   productive runs carry 1.02 transfers each, so a run is one transfer
+	 *   scheduling: irq 70%, tx 13%, deq 17%; only 6% coalesced away
+	 *   16844 interrupts for 7380 transfers -- 2.28 interrupts each
+	 *
+	 * So the guessing is not what drives this.  Dropping both speculative
+	 * sites outright would remove 30% of the scheduling, but the interrupt
+	 * on its own still outnumbers transfers better than two to one, and it
+	 * is the interrupt that accounts for most of the empty runs.  The chip
+	 * re-asserts while a transfer is in flight and the second assertion has
+	 * nothing behind it by the time the work item gets to look.
+	 *
+	 * What that costs is a wake of the MCU GPIO, a bus lock, two register
+	 * reads and an unlock, about fourteen hundred times a second.  Whether
+	 * that is worth fixing is not yet established: it has not been shown to
+	 * be what holds throughput down, and masking the SDIO interrupt across
+	 * the work item -- the obvious fix -- is not a change to make on the
+	 * strength of a ratio alone.
 	 */
 	u32 rx_sched_irq_cnt;
 	u32 rx_sched_tx_cnt;
