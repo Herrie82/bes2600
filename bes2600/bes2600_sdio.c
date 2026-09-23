@@ -118,26 +118,39 @@ struct sbus_priv {
 	 * three sched counters add up to more than rx_work_cnt; the gap is how
 	 * much the speculative queueing is already being absorbed for free.
 	 *
-	 * Measured over an eleven second load sample:
+	 * Scheduling splits irq 70%, tx 13%, deq 17%, with only 6% coalesced
+	 * away by queue_work() finding the item already pending.  So the
+	 * speculative sites are not what drives the work; the interrupt is.
 	 *
-	 *   runs 22543, of which 15337 (68%) moved no data at all
-	 *   productive runs carry 1.02 transfers each, so a run is one transfer
-	 *   scheduling: irq 70%, tx 13%, deq 17%; only 6% coalesced away
-	 *   16844 interrupts for 7380 transfers -- 2.28 interrupts each
+	 * Whether any of it costs throughput was then measured directly, by
+	 * sweeping the offered load over a 5x range on one association and
+	 * repeating it on the other band.  Every sample is bracketed with the
+	 * wall clock and the interface byte counter, so these are per megabyte
+	 * actually received:
 	 *
-	 * So the guessing is not what drives this.  Dropping both speculative
-	 * sites outright would remove 30% of the scheduling, but the interrupt
-	 * on its own still outnumbers transfers better than two to one, and it
-	 * is the interrupt that accounts for most of the empty runs.  The chip
-	 * re-asserts while a transfer is in flight and the second assertion has
-	 * nothing behind it by the time the work item gets to look.
+	 *   band        offered   Mbit/s   empty%   empty/MB   IRQ/xfer
+	 *   2.4GHz ch6    400k      5.34    55.7%        230       0.90
+	 *   2.4GHz ch6   1200k      9.41    57.4%        136       0.67
+	 *   2.4GHz ch6    full     26.23    64.1%        170       0.66
+	 *   5GHz   ch44   400k      4.29    56.7%        174       0.83
+	 *   5GHz   ch44  1200k     10.36    59.9%        137       0.70
+	 *   5GHz   ch44   full     26.61    62.7%        138       0.58
 	 *
-	 * What that costs is a wake of the MCU GPIO, a bus lock, two register
-	 * reads and an unlock, about fourteen hundred times a second.  Whether
-	 * that is worth fixing is not yet established: it has not been shown to
-	 * be what holds throughput down, and masking the SDIO interrupt across
-	 * the work item -- the obvious fix -- is not a change to make on the
-	 * strength of a ratio alone.
+	 * empty/MB is flat -- around 140 to 230 across a fivefold change in
+	 * rate and across both bands.  The empty runs are a fixed overhead per
+	 * unit of data, not a ceiling that bites harder as the link slows, so
+	 * the RX path is not what limits throughput.
+	 *
+	 * IRQ/xfer falls as load rises, to well under one interrupt per
+	 * transfer.  An earlier reading of 2.28 came from a ping flood offering
+	 * under 3 Mbit/s, which is close enough to idle that it measured the
+	 * polling floor rather than the loaded path.  Under real load the chip
+	 * batches and the interrupt is efficient.
+	 *
+	 * Both bands deliver the same ~26.4 Mbit/s, against a WAN that provides
+	 * about 34.5.  There is no 2.4 versus 5GHz gap here and no headroom
+	 * being left on the bus.  Nothing in this path needs fixing; the
+	 * counters stay because they are cheap and they answered the question.
 	 */
 	u32 rx_sched_irq_cnt;
 	u32 rx_sched_tx_cnt;
