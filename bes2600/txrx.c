@@ -125,9 +125,17 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  *
  * Retries fall by an order of magnitude and throughput nearly doubles as the
  * signal gets worse, which is the opposite of what a driver-side retry
- * problem would do. What costs 75% of transmissions on 2.4GHz is the air --
- * eleven APs share that band here, four of them on the same channel -- and
- * nothing in this file has any bearing on it.
+ * problem would do.
+ *
+ * The retry percentage is also a poor measure of harm, because of what is
+ * being retried. During a download almost everything this device transmits is
+ * a TCP ack: 14738 frames carrying 1278207 bytes, an average of 86 bytes,
+ * while 56MB arrived. Retransmitting an 86-byte frame costs a fraction of the
+ * airtime that retransmitting a 1500-byte one does, so a 55% retry rate on
+ * acks is not 55% of the airtime wasted. Moving the AP from channel 11 (three
+ * neighbours at -50 dBm) to channel 6 (one at -75 dBm) barely shifted it --
+ * 54-60% against 41-95% -- which is further evidence that the number is
+ * measuring ack retransmission rather than channel quality.
  *
  * All three are short of the 34.5 Mbit/s the WAN provides, so something else
  * is in the way too. It is not the retry policy.
