@@ -119,9 +119,9 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  * same firmware, same driver and a worse signal:
  *
  *   association                signal    retries    throughput
- *   2.4GHz HT20 (ch 11)        -40 dBm   46-75%     9-13 Mbit/s
+ *   2.4GHz HT20 (ch 11)        -40 dBm   41-95%     9-15 Mbit/s
  *   5GHz HT40 (ch 44)          -53 dBm   13-18%     17-19 Mbit/s
- *   5GHz HT40 (ch 52)          -54 dBm    7-8%      18-20 Mbit/s
+ *   5GHz HT40 (ch 52)          -59 dBm    9-29%     17-57 Mbit/s
  *
  * Retries fall by an order of magnitude and throughput nearly doubles as the
  * signal gets worse, which is the opposite of what a driver-side retry
