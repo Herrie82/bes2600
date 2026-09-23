@@ -1390,6 +1390,15 @@ void bes2600_tx_confirm_cb(struct bes2600_common *hw_priv,
 	 *
 	 * Fix taken from ls-jl/bes2600-txfix, "fix TX queue recovery and add
 	 * guarded monitor TX".
+	 *
+	 * It does not change throughput, which is worth saying because it was
+	 * the first change here that looked like it might.  Six 50MB downloads
+	 * on 2.4GHz with the fix in place gave 12-15 Mbit/s at 41-95% retries,
+	 * indistinguishable from the 9-15 Mbit/s at 46-81% measured without
+	 * it.  That fits what the bug actually is: the leak needs a vif to be
+	 * removed or stopped with frames in flight, which does not happen
+	 * during a steady transfer.  It is a real leak and worth fixing on its
+	 * own terms, not a throughput fix.
 	 */
 	if (WARN_ON(queue_id >= ARRAY_SIZE(hw_priv->tx_queue)))
 		return;
