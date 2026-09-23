@@ -1363,7 +1363,7 @@ void bes2600_tx_confirm_cb(struct bes2600_common *hw_priv,
 			  struct wsm_tx_confirm *arg)
 {
 	u8 queue_id = bes2600_queue_get_queue_id(arg->packetID);
-	struct bes2600_queue *queue = &hw_priv->tx_queue[queue_id];
+	struct bes2600_queue *queue;
 	struct sk_buff *skb;
 	const struct bes2600_txpriv *txpriv;
 	struct bes2600_vif *priv;
@@ -1377,17 +1377,43 @@ void bes2600_tx_confirm_cb(struct bes2600_common *hw_priv,
 	if (unlikely(bes2600_itp_tx_running(hw_priv)))
 		return;
 
-	priv = cw12xx_hwpriv_to_vifpriv(hw_priv, arg->if_id);
-	if (unlikely(!priv))
+	/*
+	 * Every path out of here has to drop the queue entry, or the frame is
+	 * queued forever and its buffer is never given back.
+	 *
+	 * These three returns did not.  A confirm arriving for an interface
+	 * that has gone away, or for one mac80211 has stopped, was simply
+	 * dropped, and each one permanently consumed a slot -- so a vif being
+	 * removed or brought down while frames were in flight slowly starved
+	 * the queue.  The queue_id check came after the queue had already been
+	 * indexed with it, too, which is the wrong order for a bounds test.
+	 *
+	 * Fix taken from ls-jl/bes2600-txfix, "fix TX queue recovery and add
+	 * guarded monitor TX".
+	 */
+	if (WARN_ON(queue_id >= ARRAY_SIZE(hw_priv->tx_queue)))
 		return;
+	queue = &hw_priv->tx_queue[queue_id];
+
+	priv = cw12xx_hwpriv_to_vifpriv(hw_priv, arg->if_id);
+	if (unlikely(!priv)) {
+		bes_warn("TX confirm for removed vif %d, packet %08x\n",
+			 arg->if_id, arg->packetID);
+#ifdef CONFIG_BES2600_TESTMODE
+		bes2600_queue_remove(hw_priv, queue, arg->packetID);
+#else
+		bes2600_queue_remove(queue, arg->packetID);
+#endif
+		return;
+	}
 	if (unlikely(priv->mode == NL80211_IFTYPE_UNSPECIFIED)) {
 		/* STA is stopped. */
 		spin_unlock(&priv->vif_lock);
-		return;
-	}
-
-	if (WARN_ON(queue_id >= 4)) {
-		spin_unlock(&priv->vif_lock);
+#ifdef CONFIG_BES2600_TESTMODE
+		bes2600_queue_remove(hw_priv, queue, arg->packetID);
+#else
+		bes2600_queue_remove(queue, arg->packetID);
+#endif
 		return;
 	}
 
