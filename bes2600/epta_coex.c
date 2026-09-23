@@ -366,6 +366,22 @@ void coex_set_wifi_conn(struct bes2600_common *hw_priv, uint8_t connect_status)
 		} else if (connect_status == EPTA_STATE_WIFI_SCAN_COMP) {
 			coex_epta_set_connect(hw_priv, wlan_duration_cfg, bt_duration_cfg, 0);
 		} else if (connect_status == EPTA_STATE_WIFI_GOT_IP) {
+			/*
+			 * Note the hardcoded split: WiFi 20ms of the 102.4ms
+			 * TDD period, Bluetooth 80ms.  Every other branch here
+			 * passes wlan_duration_cfg/bt_duration_cfg; this one
+			 * alone hands Bluetooth 80% of the air at the moment
+			 * WiFi becomes usable, and it does so whether or not
+			 * Bluetooth is up.  On this PineTab2 hci0 is DOWN with
+			 * an all-zero address and zero events, and the driver
+			 * still issued wlan:20000 bt:80000 132 times in a
+			 * single boot.
+			 *
+			 * It is reverted to wlan:102400 bt:0 immediately
+			 * afterwards in every trace taken so far, so this has
+			 * not been shown to cost anything.  Left as-is and
+			 * documented rather than changed on suspicion.
+			 */
 			coex_epta_set_connect(hw_priv, 20000, 80000, 3);
 			coex_epta_recover(hw_priv, EPTA_FREEZE_SCANNING | EPTA_FREEZE_CONNECTING);
 		} else if (connect_status == EPTA_STATE_WIFI_CONNECTING) {

@@ -2427,6 +2427,28 @@ void bes2600_join_work(struct work_struct *work)
 		 * confirm, which is where mainline cw1200 and BES's own cw1260
 		 * both put it.  Switching again at join time only reopened the
 		 * retune race that the wait here was added to close.
+		 *
+		 * What a JOIN refusal actually looks like, measured on the
+		 * build that still switched here, 36 connect attempts:
+		 *
+		 *   5GHz   ch44            12/12 associated,  0 refusals
+		 *   2.4GHz ch6, from 5GHz   6/8  associated,  8 refusals
+		 *   2.4GHz ch6, from 2.4    4/8  associated, 26 refusals
+		 *
+		 * So it is not the band transition -- staying on 2.4GHz is
+		 * worse than arriving from 5GHz -- and it is not the request,
+		 * which is identical on every refusal: mode 1 band 0 ch 6,
+		 * correct BSSID, ssid_len 18, dtim 1, beacon 100, basic_rates
+		 * 0x7, scan_in_progress 0.  It is 2.4GHz specific and roughly
+		 * a coin flip, while 5GHz has not refused once.
+		 *
+		 * The one thing that is 2.4GHz-only in this driver is
+		 * Bluetooth coexistence: coex_rssi_update() puts channels
+		 * above 14 into FDD, where WiFi and BT do not share the air,
+		 * and leaves 2.4GHz in TDD, where they split a 102400us
+		 * period.  That is the shape of the failure and the next thing
+		 * to test -- see the note in epta_coex.c about the airtime
+		 * split this driver asks for while Bluetooth is down.
 		 */
 
 		/* avoid lmac assert when wpa_supplicant connect to ap without scan */
