@@ -694,10 +694,31 @@ static const struct file_operations fops_mib_probe = {
  *
  *   echo 1 > /sys/kernel/debug/ieee80211/phy0/bes2600/fw_debug
  *
- * The driver-side counters land in the kernel log.  Where the firmware's own
- * output goes is the open question -- the chip UART is silent (see above), so
- * watch for "unhandled MCU indication" from wsm_handle_rx(), which is where it
- * would surface if it comes back over SDIO at all.
+ * The driver-side counters land in the kernel log.  The firmware's own half of
+ * the dump does not: triggered eight times across two boots, idle and under
+ * load, it produced no MCU indication and no WSM indication at all, with the
+ * counters in wsm_handle_rx() reading zero for the whole boot each time.  So
+ * the firmware's trace output does not come back over SDIO, and it does not
+ * come out of the chip UART either (see above).  It is unreachable from the
+ * host, and that is now measured rather than assumed -- there is no point
+ * chasing it further.
+ *
+ * What the trigger is still good for is the driver-side half, which had never
+ * been visible except on bus errors.  Under load the SDIO RX poll loop divides
+ * cleanly -- the three counters sum to the total exactly -- into
+ *
+ *   74%  zero reads      no length in the control register
+ *    2%  stale toggle    length present, toggle bit not yet flipped
+ *   24%  productive      a transfer followed
+ *
+ * A drain-until-empty loop discovers "empty" by reading zero, so a high zero
+ * share is structural rather than wrong on its face.  What is worth a second
+ * look is the cost: bes2600_sdio_read_ctrl() answers a zero read with a second
+ * register read to tell a true zero from a false one, and sdio_rx_work() will
+ * go round again up to six times before giving up.  Across the same window
+ * only 106 of those retries turned into a fresh toggle, so most of the second
+ * reads buy nothing.  Measuring that properly needs a counter on the retry
+ * itself, not this one.
  *
  * This writes no new register: it is the same sequence the driver already
  * performs whenever the bus misbehaves.
