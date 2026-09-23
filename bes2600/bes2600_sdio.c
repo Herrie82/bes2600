@@ -1917,8 +1917,25 @@ static int bes2600_sdio_probe(struct sdio_func *func,
 
 	sdio_set_drvdata(func, self);
 	sdio_claim_host(func);
-	sdio_enable_func(func);
+	/*
+	 * Check this.  Every register access afterwards goes through the
+	 * function, so if enabling it fails they all return -EBUSY and the
+	 * first sign of trouble is the firmware download giving up:
+	 *
+	 *   bes_slave_rx_ready,71 err=-16
+	 *   download dpd cali firmware failed
+	 *   bes2600_sdio_probe failed, func:1
+	 *
+	 * which says nothing about where -16 came from.  The return value was
+	 * discarded here, so a failure to enable was indistinguishable from a
+	 * chip that would not talk.
+	 */
+	status = sdio_enable_func(func);
 	sdio_release_host(func);
+	if (status) {
+		bes_err("sdio_enable_func failed: %d\n", status);
+		goto err;
+	}
 
 	bes2600_reg_set_object(&bes2600_sdio_sbus_ops, self);
 	status = bes2600_load_firmware(&bes2600_sdio_sbus_ops, self);
