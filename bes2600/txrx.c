@@ -1822,47 +1822,34 @@ void bes2600_rx_cb(struct bes2600_vif *priv,
 
 	if (arg->rxedRate >= 14) {
 		/*
-		 * The rate table stops at WSM_TRANSMIT_RATE_HT_65, i.e. MCS7 at
-		 * HT20 with a long guard interval, so rxedRate alone cannot say
-		 * whether a frame arrived 40MHz or short GI.  Nothing here ever
-		 * set RX_ENC_FLAG_40MHZ or RX_ENC_FLAG_SHORT_GI, so iw computes
-		 * the HT20 long-GI rate for whatever MCS came back and reports
-		 * 65 Mbit/s for MCS7 no matter how the frame really arrived --
-		 * which is why a link transmitting at 150 Mbit/s 40MHz short GI
-		 * shows a 65 Mbit/s receive rate and looks badly asymmetric.
+		 * The reported receive rate is wrong on any HT40 or short-GI
+		 * link, and it cannot be fixed from here.
 		 *
-		 * If the firmware reports width and guard interval at all it
-		 * must be in the upper bits of the status word: the highest bit
-		 * this driver names is WSM_RX_STATUS_GROUP_KEY, BIT(19).  Log
-		 * anything above that once so the encoding can be identified
-		 * rather than guessed at.
+		 * Only RX_ENC_HT and the MCS index are set, never
+		 * RX_ENC_FLAG_40MHZ or RX_ENC_FLAG_SHORT_GI, so userspace
+		 * computes the HT20 long-GI rate for whatever MCS arrived: a
+		 * link transmitting at 150 Mbit/s MCS7 40MHz short GI reports
+		 * 65 Mbit/s MCS7 coming back, and looks half-duplex when it is
+		 * not.  Mainline cw1200 and the DanctNIX bes2600 carry the same
+		 * three lines, so this came from the original ST-Ericsson
+		 * driver and has never been fixed anywhere.
 		 *
-		 * The whole lineage has this hole -- mainline cw1200 and the
-		 * DanctNIX bes2600 carry the identical three lines -- so it
-		 * came from the original ST-Ericsson driver and nobody has
-		 * needed the receive rate to be accurate since.  There is
-		 * therefore no upstream to copy the answer from.
+		 * rxedRate cannot carry it either: the table ends at
+		 * WSM_TRANSMIT_RATE_HT_65, MCS7 at HT20 with long GI.
+		 *
+		 * The firmware does set bits this driver never named, but they
+		 * are not it.  Sampling one line per distinct (bits, rate) pair
+		 * across two associations gave
+		 *
+		 *   0x1e000000  mcs 3,4,5,6,7   2.4GHz HT20 long GI
+		 *   0x1e000000  mcs 3,4,5,6,7   5GHz  HT40 short GI
+		 *
+		 * the same constant on both, so bits 25-28 describe neither
+		 * width nor guard interval -- they do not vary when those do.
+		 * Whatever they are, the information needed here is not in the
+		 * RX indication, and the reported rate can only be explained,
+		 * not corrected.
 		 */
-		if (unlikely(arg->flags & ~0xFFFFFu)) {
-			static u32 seen_combos[16];
-			static unsigned n_combos;
-			u32 hi = arg->flags & ~0xFFFFFu;
-			u32 combo = hi | arg->rxedRate;
-			unsigned i;
-
-			/* One line per distinct (upper bits, rate) pair: the
-			 * mapping only becomes readable once several rates have
-			 * been seen, and a line per frame would bury it. */
-			for (i = 0; i < n_combos; i++)
-				if (seen_combos[i] == combo)
-					break;
-			if (i == n_combos && n_combos < ARRAY_SIZE(seen_combos)) {
-				seen_combos[n_combos++] = combo;
-				bes_warn("rx: status hi 0x%08x rate %u (mcs %u)\n",
-					 hi, arg->rxedRate, arg->rxedRate - 14);
-			}
-		}
-
 		hdr->encoding |= RX_ENC_HT;
 		hdr->rate_idx = arg->rxedRate - 14;
 	} else if (arg->rxedRate >= 4) {
