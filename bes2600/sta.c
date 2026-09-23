@@ -131,6 +131,21 @@ MODULE_PARM_DESC(join_pre_delay_ms,
  * So the question is no longer "how long to wait" but "what puts the chip in
  * this state", and the answer is somewhere before the JOIN.  join_retry and
  * join_retry_delay_ms stay as diagnostics, defaulted off.
+ *
+ * A warning about measuring any of this.  The association rate on this device
+ * falls with uptime -- 6 of 8 early in a boot, 3 of 16 half an hour later --
+ * and the end of one such decline is not a WiFi failure at all: a test script
+ * running over ssh started reporting "grep: command not found", "sed: command
+ * not found" and finally "script file read error: Input/output error", after
+ * which sshd stopped answering while the device still replied to pings.  That
+ * is the root filesystem going away, not the radio.
+ *
+ * It matters here for two reasons.  Any arm-versus-arm comparison taken late
+ * in a boot may be measuring a sick system rather than the setting under test,
+ * so interleave the arms or reboot between them.  And the WiFi chip sits on
+ * mmc2 while the rootfs sits on its own controller, so if these turn out to
+ * share a failure it belongs in the MMC layer rather than here -- worth
+ * checking before any more of this failure is blamed on the driver.
  */
 static int join_retry;
 module_param(join_retry, int, 0644);
