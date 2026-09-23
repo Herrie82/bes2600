@@ -96,25 +96,39 @@ MODULE_PARM_DESC(join_pre_delay_ms,
 	"delay in ms between the pre-JOIN MIB writes and JOIN (default 0)");
 
 /*
- * join_retry is no longer only a diagnostic.
+ * join_retry - re-send a refused JOIN.  Off by default; it does not help.
  *
- * Asked to re-send a refused JOIN unchanged, the firmware accepted it four
- * times in a single eight-connect run -- same mode, band, channel, BSSID,
- * SSID, DTIM, beacon interval and basic rates, about 20ms later.  Nothing
- * about the request differs between the refusal and the acceptance, so the
- * refusal is transient state inside the chip and not anything this driver
- * sends.  That is why every request-side theory tested against this failure
- * came back negative: the request was never wrong.
+ * The finding behind it stands: asked to re-send a refused JOIN unchanged,
+ * the firmware sometimes accepts it -- seven times across two runs, same
+ * mode, band, channel, BSSID, SSID, DTIM, beacon interval and basic rates.
+ * Nothing about the request differs between the refusal and the acceptance,
+ * so the refusal is transient state inside the chip rather than anything this
+ * driver sends, which is why every request-side theory came back negative.
  *
- * Retrying is also strictly better than what happened before, which was to
- * report connection loss on the first refusal and let mac80211 spend its
- * three authentication attempts, roughly 130ms apart, on a chip that would
- * very likely have said yes to the second ask immediately.
+ * Retrying at 20ms does not clear it, though.  Interleaving the two settings
+ * attempt by attempt, so that both saw the same device degradation, gave 5 of
+ * 8 associations with three retries against 6 of 8 with none, and only 3 of
+ * 22 refusals were overturned.  The logs say why: a refused JOIN is usually
+ * still refused 20, 40 and 60ms later, and those three attempts spend time
+ * out of the authentication budget mac80211 is holding, so
+ * "authentication ... timed out" arrives sooner than it otherwise would.
+ *
+ * What does eventually succeed is mac80211's own retry, a full authenticate
+ * cycle 130ms or more later.  So the state clears somewhere above 60ms, and a
+ * useful in-driver retry would have to wait long enough to outlast it without
+ * blocking the workqueue past the auth timeout.  join_retry_delay_ms exists
+ * to find that number without another build; until it is found, the default
+ * of 0 keeps the old behaviour, which measured better.
  */
-static int join_retry = 3;
+static int join_retry;
 module_param(join_retry, int, 0644);
 MODULE_PARM_DESC(join_retry,
-	"re-send a refused JOIN this many times before giving up (default 3)");
+	"re-send a refused JOIN this many times before giving up (default 0)");
+
+static int join_retry_delay_ms = 20;
+module_param(join_retry_delay_ms, int, 0644);
+MODULE_PARM_DESC(join_retry_delay_ms,
+	"delay between JOIN retries in ms (default 20)");
 
 #define WEP_ENCRYPT_HDR_SIZE    4
 #define WEP_ENCRYPT_TAIL_SIZE   4
@@ -2568,17 +2582,17 @@ void bes2600_join_work(struct work_struct *work)
 		join_ret = wsm_join(hw_priv, &join, priv->if_id);
 
 		/*
-		 * A refused JOIN is worth asking again.  The request does not
-		 * change between attempts, and the firmware accepts it often
-		 * enough on the second ask that giving up on the first costs
-		 * an association for nothing.
+		 * Diagnostic, off by default -- see the note on join_retry.
+		 * At 20ms this loses more to the authentication timeout than
+		 * it wins back; the delay is settable so the timescale the
+		 * chip actually clears on can be found.
 		 */
 		if (join_ret && join_retry > 0) {
 			int tries = min(join_retry, 5);
 			int n;
 
 			for (n = 1; n <= tries && join_ret; n++) {
-				msleep(20);
+				msleep(clamp(join_retry_delay_ms, 1, 500));
 				join_ret = wsm_join(hw_priv, &join, priv->if_id);
 				bes_warn("[STA] JOIN retry %d/%d: %s\n", n, tries,
 					 join_ret ? "refused again" : "ACCEPTED");
