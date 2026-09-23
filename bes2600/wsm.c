@@ -723,6 +723,28 @@ static int wsm_join_confirm(struct bes2600_common *hw_priv,
 			 atomic_read(&hw_priv->scan.in_progress),
 			 hw_priv->scan.req ? 'y' : 'n',
 			 coex_get_conn_state());
+		/*
+		 * If this ever needs chasing further, the chip can say more
+		 * than we currently ask it.  open-vela/vendor_bes carries
+		 * chips/bes/include/bes_wl_priv.h, a BES header for the same
+		 * silicon running NuttX, which defines a private ioctl space
+		 * this driver does not implement:
+		 *
+		 *   BES_IW_PRIV_CMD_ID_SET_LMAC_LOG_MODE   enable LMAC logging
+		 *   BES_IW_PRIV_CMD_ID_GET_CONN_STATUS     structured connect state
+		 *   BES_IW_PRIV_CMD_ID_SET_LMAC_CRASH      force a crash dump
+		 *
+		 * and a wlan_conn_status enum that names the failures directly
+		 * -- AUTH_REJECT, AUTH_TIMEOUT, ASSOC_REJECT, ASSOC_TIMEOUT,
+		 * HANDSHAKE_FAIL.  That is the firmware's own account of why a
+		 * connection failed, which is exactly what is missing here.
+		 *
+		 * It is a NuttX ioctl rather than a WSM command, so the
+		 * transport does not carry over directly, but it establishes
+		 * that LMAC logging exists and can be switched on.  Finding the
+		 * WSM equivalent would give this driver the chip's reason for
+		 * refusing a JOIN instead of leaving it to be inferred.
+		 */
 		bes_warn("wsm commands leading up to it, oldest first:\n");
 		wsm_cmd_hist_dump();
 		return -EINVAL;
