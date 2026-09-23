@@ -49,6 +49,13 @@ MODULE_DESCRIPTION("mac80211 BES2600 SDIO driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("bes2600_wlan");
 
+/*
+ * How many extra trips round sdio_rx_work() a control register that read back
+ * empty is worth.  This was the literal 5 in a "retry <= 5" test; naming it
+ * changes nothing, the budget is still six iterations.
+ */
+#define BES2600_RX_RETRY_MAX	6
+
 struct sbus_priv {
 	struct sdio_func	*func;
 	struct bes2600_common	*core;
@@ -83,6 +90,22 @@ struct sbus_priv {
 	u32 rx_data_cnt;
 	u32 rx_xfer_cnt;
 	u32 rx_proc_cnt;
+	/*
+	 * Is the zero-read retry worth what it costs?  rx_zero_ctrl_cnt says
+	 * how often the control register read back empty, but not whether
+	 * going round again found anything.  These say that.
+	 *
+	 *   rx_zero_stop_cnt   the confirm read said "really empty", so the
+	 *                      loop stopped rather than retrying
+	 *   rx_retry_cnt       retry iterations actually taken
+	 *   rx_retry_hit[n]    transfers that happened at retry depth n
+	 *                      ([0] is a first-pass hit, i.e. no retry needed)
+	 *   rx_retry_miss_cnt  retry budgets spent in full with no transfer
+	 */
+	u32 rx_zero_stop_cnt;
+	u32 rx_retry_cnt;
+	u32 rx_retry_hit[BES2600_RX_RETRY_MAX + 1];
+	u32 rx_retry_miss_cnt;
 	long unsigned int last_irq_timestamp;
 	long unsigned int last_rx_data_timestamp;
 #endif
@@ -620,6 +643,13 @@ void sdio_work_debug(struct sbus_priv *self)
 	bes_err("%s rx ctrl: total=%u continuous=%u xfer=%u remain=%u zero=%u last=%x(%x) next=%d\n", __func__,
 			self->rx_total_ctrl_cnt, self->rx_continuous_ctrl_cnt, self->rx_xfer_cnt, self->rx_remain_ctrl_cnt, self->rx_zero_ctrl_cnt,
 			self->rx_last_ctrl, self->rx_valid_ctrl, self->next_toggle);
+	bes_err("%s rx retry: taken=%u miss=%u zero=%u zero_stop=%u hit=%u/%u/%u/%u/%u/%u/%u\n",
+			__func__, self->rx_retry_cnt, self->rx_retry_miss_cnt,
+			self->rx_zero_ctrl_cnt, self->rx_zero_stop_cnt,
+			self->rx_retry_hit[0], self->rx_retry_hit[1],
+			self->rx_retry_hit[2], self->rx_retry_hit[3],
+			self->rx_retry_hit[4], self->rx_retry_hit[5],
+			self->rx_retry_hit[6]);
 	bes_err("%s rx: last timestamp=%u, total=%u(%u), proc=%u\n", __func__,
 			(u32)jiffies_to_msecs(self->last_rx_data_timestamp),
 			self->rx_data_cnt, self->rx_xfer_cnt, self->rx_proc_cnt);
@@ -755,10 +785,12 @@ static int bes2600_sdio_read_ctrl(struct sbus_priv *self, u32 *ctrl_reg)
 		/* distinguish zero true or false */
 		self->rx_zero_ctrl_cnt++;
 		ret = bes2600_sdio_reg_read(self, BES_TX_CTRL_REG_ID, &data[1], 1);
-		if (!ret && (data[1] & 0x01))
+		if (!ret && (data[1] & 0x01)) {
 			again = 0;
-		else
+			self->rx_zero_stop_cnt++;
+		} else {
 			again = 1;
+		}
 	}
 	self->rx_last_ctrl = data[0];
 	#endif
@@ -900,10 +932,17 @@ static void sdio_rx_work(struct work_struct *work)
 		total_len = PACKET_TOTAL_LEN(ctrl_reg);
 		if (!total_len) {
 			bes2600_sdio_unlock(self);
-			if ((again == 1) && retry <= 5) {
+			if ((again == 1) && retry < BES2600_RX_RETRY_MAX) {
 				retry++;
+				self->rx_retry_cnt++;
 				continue;
 			} else {
+				/*
+				 * Leaving with nothing.  If we retried at all,
+				 * those reads bought us nothing this time.
+				 */
+				if (retry)
+					self->rx_retry_miss_cnt++;
 				break;
 			}
 		}
@@ -928,6 +967,8 @@ static void sdio_rx_work(struct work_struct *work)
 			sdio_work_debug(self);
 			goto failed;
 		}
+		/* Record the depth this transfer was found at before clearing. */
+		self->rx_retry_hit[retry]++;
 		retry = 0;
 		self->rx_xfer_cnt++;
 		self->last_rx_data_timestamp = jiffies;
@@ -1621,6 +1662,10 @@ static void bes2600_sdio_empty_work(struct sbus_priv *self)
 	self->rx_continuous_ctrl_cnt = 0;
 	self->rx_remain_ctrl_cnt = 0;
 	self->rx_zero_ctrl_cnt = 0;
+	self->rx_zero_stop_cnt = 0;
+	self->rx_retry_cnt = 0;
+	self->rx_retry_miss_cnt = 0;
+	memset(self->rx_retry_hit, 0, sizeof(self->rx_retry_hit));
 	self->rx_data_cnt = 0;
 	self->rx_xfer_cnt = 0;
 	self->rx_proc_cnt = 0;
