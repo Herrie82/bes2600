@@ -307,11 +307,16 @@ struct ip_alive_cfg {
 #endif /* CONFIG_BES2600_KEEP_ALIVE */
 
 /*
- * How long bes2600_join_work() will wait for the firmware to confirm a channel
- * switch before issuing JOIN.  Switches complete in a few milliseconds; this is
- * only a backstop against a missing indication.
+ * How long bes2600_config() waits for the firmware to confirm a channel switch.
+ *
+ * Switches complete in a few milliseconds, so this is a backstop against a
+ * missing indication rather than a normal wait.  It was 200ms while the wait
+ * lived in bes2600_join_work(), where a long stall would have held up a
+ * connect; in config the cost of waiting too briefly is worse than waiting too
+ * long, because a spurious timeout leaves the stored channel behind and fails
+ * the config call.  Mainline cw1200 waits 3 seconds here, so do the same.
  */
-#define BES2600_CHANNEL_SWITCH_TMO	200
+#define BES2600_CHANNEL_SWITCH_TMO	3000
 
 struct bes2600_common {
 	struct bes2600_debug_common	*debug;

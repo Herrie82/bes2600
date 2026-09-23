@@ -623,18 +623,71 @@ int bes2600_config(struct ieee80211_hw *dev, u32 changed)
 					     if_id));
 	}
 
-	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
-		/* Switch Channel commented for CC Mode */
+	if ((changed & IEEE80211_CONF_CHANGE_CHANNEL) &&
+	    hw_priv->channel != conf->chandef.chan) {
+		/*
+		 * Tell the firmware, not just ourselves.
+		 *
+		 * This used to record the new channel and stop -- the
+		 * "Switch Channel commented for CC Mode" note that shipped
+		 * with the driver -- and bes2600_join_work() made up for it by
+		 * issuing a switch of its own immediately before every JOIN.
+		 * That is the wrong place for it, and it is not what the two
+		 * other implementations of this protocol do:
+		 *
+		 *   mainline cw1200      wsm_switch_channel() appears once in
+		 *                        sta.c, in cw1200_config(); do_join()
+		 *                        does not switch at all
+		 *   BES's own cw1260     same -- switch only from
+		 *                        cw1200_config(), and join_work() goes
+		 *                        disable_listening, operational mode,
+		 *                        0x100E, 0x1020, JOIN
+		 *
+		 * Both wait for the firmware to confirm the switch before
+		 * treating the new channel as current, and both set the stored
+		 * channel only once it has.  Doing it at join time instead put
+		 * a radio retune between the switch and the JOIN with nothing
+		 * enforcing the order, which is what the wait added to
+		 * join_work was patching around.  Switch here and the JOIN
+		 * issues on a radio that is already where it belongs.
+		 */
 		struct ieee80211_channel *ch = conf->chandef.chan;
+		struct wsm_switch_channel channel = {
+			.channelMode = NL80211_CHAN_NO_HT << 4,
+			.channelSwitchCount = 0,
+			.newChannelNumber = ch->hw_value,
+		};
 
 		bes_devel("[STA] Freq %d (wsm ch: %d, type: %d).\n",
 			   ch->center_freq, ch->hw_value,
 			   cfg80211_get_chandef_type(&conf->chandef));
-		/* Earlier there was a call to __bes2600_flush().
-		   Removed as deemed unnecessary */
 
-		hw_priv->channel = ch;
+		if (!wsm_switch_channel(hw_priv, &channel, if_id)) {
+			long left = wait_event_timeout(
+					hw_priv->channel_switch_done,
+					!hw_priv->channel_switch_in_progress,
+					msecs_to_jiffies(BES2600_CHANNEL_SWITCH_TMO));
 
+			if (left) {
+				/* The indication released the datapath. */
+				hw_priv->channel = ch;
+			} else {
+				/*
+				 * No indication.  wsm_switch_channel() locked
+				 * TX and only that indication unlocks it, so
+				 * releasing it here is what keeps a missed
+				 * switch from wedging the datapath for good.
+				 * Leave hw_priv->channel alone: mac80211 sees
+				 * the error and asks again.
+				 */
+				bes_warn("[STA] channel switch to %d did not complete in %dms\n",
+					 ch->hw_value,
+					 BES2600_CHANNEL_SWITCH_TMO);
+				hw_priv->channel_switch_in_progress = 0;
+				wsm_unlock_tx(hw_priv);
+				ret = -ETIMEDOUT;
+			}
+		}
 	}
 
 	if (changed & IEEE80211_CONF_CHANGE_RETRY_LIMITS) {
@@ -2267,7 +2320,6 @@ void bes2600_join_work(struct work_struct *work)
 
 	down(&hw_priv->conf_lock);
 	{
-		struct wsm_switch_channel channel;
 		struct wsm_join join = {
 			.mode = (bss->capability & WLAN_CAPABILITY_IBSS) ?
 				WSM_JOIN_MODE_IBSS : WSM_JOIN_MODE_BSS,
@@ -2369,43 +2421,13 @@ void bes2600_join_work(struct work_struct *work)
 		wsm_set_protected_mgmt_policy(hw_priv, &mgmt_policy,
 					      priv->if_id);
 
-		/* need to switch channel before join */
-		channel.channelMode = NL80211_CHAN_NO_HT << 4;
-		channel.channelSwitchCount = 0;
-		channel.newChannelNumber = conf->chandef.chan->hw_value;
-		wsm_switch_channel(hw_priv, &channel,  priv->if_id);
-
 		/*
-		 * ...and wait for the firmware to say it has, which the
-		 * comment above asks for but nothing enforced.
-		 *
-		 * wsm_switch_channel() only queues the command: it sets
-		 * channel_switch_in_progress, and the firmware clears it much
-		 * later with a channel-switch indication that wakes
-		 * channel_switch_done.  That waitqueue had no waiters at all,
-		 * so JOIN went out roughly 7ms behind the switch -- the gap is
-		 * just the probe template below -- while the radio could still
-		 * be retuning.  A JOIN issued mid-retune is refused with every
-		 * field of the request correct, which is exactly the failure
-		 * seen on a PineTab2: intermittent, no pattern in the request,
-		 * and unaffected by resetting the firmware beforehand.
-		 *
-		 * The indication is handled on the bes2600_bh kthread, not on
-		 * the workqueue this runs on, so waiting here cannot deadlock
-		 * against the thing it waits for.  The timeout is a backstop:
-		 * if the indication never arrives, carry on and let the JOIN
-		 * fail as it did before rather than stall the connect.
+		 * No channel switch here.  bes2600_config() issues it when
+		 * mac80211 changes channel and waits for the firmware to
+		 * confirm, which is where mainline cw1200 and BES's own cw1260
+		 * both put it.  Switching again at join time only reopened the
+		 * retune race that the wait here was added to close.
 		 */
-		if (hw_priv->channel_switch_in_progress) {
-			long left = wait_event_timeout(hw_priv->channel_switch_done,
-					!hw_priv->channel_switch_in_progress,
-					msecs_to_jiffies(BES2600_CHANNEL_SWITCH_TMO));
-
-			if (!left)
-				bes_warn("[STA] channel switch to %d did not complete in %dms, joining anyway\n",
-					 channel.newChannelNumber,
-					 BES2600_CHANNEL_SWITCH_TMO);
-		}
 
 		/* avoid lmac assert when wpa_supplicant connect to ap without scan */
 		probe_tmp.skb = ieee80211_probereq_get(hw_priv->hw, priv->vif->addr, NULL, 0, 0);
