@@ -14,6 +14,9 @@
 #include <linux/seq_file.h>
 #include "bes2600.h"
 #include "debug.h"
+
+/* defined in bes2600_sdio.c; declared here the way bh.c declares it */
+extern void sdio_work_debug(struct sbus_priv *self);
 #ifdef CONFIG_BES2600_DEBUGFS
 /* join_status */
 static const char * const bes2600_debug_join_status[] = {
@@ -662,6 +665,63 @@ static const struct file_operations fops_mib_probe = {
 	.llseek = default_llseek,
 };
 
+/*
+ * fw_debug - make the firmware dump its own LMAC state.
+ *
+ * The firmware's host_int_irq handler dispatches on the 16-bit value the host
+ * leaves in BES_HOST_INT_REG_ID, and its jump table is exactly the bit list in
+ * hwio.h:
+ *
+ *   1 << 1   BES_AP_WAKEUP_CFG
+ *   1 << 2   BES_SUBSYSTEM_MCU_DEACTIVE
+ *   1 << 3   BES_SUBSYSTEM_MCU_ACTIVE
+ *   1 << 4   BES_SUBSYSTEM_WIFI_DEACTIVE
+ *   1 << 5   BES_SUBSYSTEM_WIFI_ACTIVE
+ *   1 << 6   BES_SUBSYSTEM_WIFI_DEBUG
+ *   1 << 7   BES_SUBSYSTEM_BT_DEACTIVE
+ *   1 << 8   BES_SUBSYSTEM_BT_ACTIVE
+ *   1 << 10  BES_SUBSYSTEM_BT_WAKEUP
+ *   1 << 11  BES_SUBSYSTEM_BT_SLEEP
+ *
+ * WIFI_DEBUG is the interesting one.  Its handler prints the MCU timestamp,
+ * the CP2MCU interrupt mask, the LMAC OutItem producer and consumer pointers
+ * with their delta, and the transq TX count -- the same class of state BES's
+ * own on-chip build reads directly, and the nearest thing to the LMAC logging
+ * their SET_LMAC_LOG_MODE ioctl turns on.
+ *
+ * sdio_work_debug() already sends it, but only from bus error paths, so it has
+ * never run while the link was merely slow.  This lets it run on demand:
+ *
+ *   echo 1 > /sys/kernel/debug/ieee80211/phy0/bes2600/fw_debug
+ *
+ * The driver-side counters land in the kernel log.  Where the firmware's own
+ * output goes is the open question -- the chip UART is silent (see above), so
+ * watch for "unhandled MCU indication" from wsm_handle_rx(), which is where it
+ * would surface if it comes back over SDIO at all.
+ *
+ * This writes no new register: it is the same sequence the driver already
+ * performs whenever the bus misbehaves.
+ */
+static ssize_t bes2600_fw_debug_write(struct file *file,
+	const char __user *user_buf, size_t count, loff_t *ppos)
+{
+	struct bes2600_common *hw_priv = file->private_data;
+
+	if (!hw_priv->sbus_priv)
+		return -ENODEV;
+
+	bes_info("fw_debug: asking the firmware for its LMAC state\n");
+	sdio_work_debug(hw_priv->sbus_priv);
+
+	return count;
+}
+
+static const struct file_operations fops_fw_debug = {
+	.open = bes2600_generic_open,
+	.write = bes2600_fw_debug_write,
+	.llseek = default_llseek,
+};
+
 int bes2600_debug_init_common(struct bes2600_common *hw_priv)
 {
 	int ret = -ENOMEM;
@@ -690,6 +750,10 @@ int bes2600_debug_init_common(struct bes2600_common *hw_priv)
 
 	if (!debugfs_create_file("mib_probe", S_IWUSR, d->debugfs_phy,
 			hw_priv, &fops_mib_probe))
+		goto err;
+
+	if (!debugfs_create_file("fw_debug", S_IWUSR, d->debugfs_phy,
+			hw_priv, &fops_fw_debug))
 		goto err;
 
 	if (!debugfs_create_file("wsm_dumps", S_IWUSR, d->debugfs_phy,

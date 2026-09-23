@@ -256,6 +256,28 @@ static inline int bes2600_ahb_write_32(u32 addr, u32 val)
 #define BES_TX_NEXT_LEN_MASK	(0xffff)
 #define BES_TX_DATA_ADDR	(0x0)
 
+/*
+ * What the firmware does with this register, read out of the patch image.
+ *
+ * Its handler -- host_int_irq(), which names itself in an assert string -- is
+ * at 0x20001910 in best2002_fw_sdio.bin.  It reads a 16-bit value from the
+ * host interrupt register and dispatches on it through a tbh jump table, and
+ * the table's live entries are exactly the bits below, with everything else
+ * falling into an assert that prints "host_int_irq int_type=%x".  So this list
+ * is the firmware's whole host-initiated command set, not a driver convention.
+ *
+ * BES_SUBSYSTEM_WIFI_DEBUG is the one worth knowing about.  Its arm, at
+ * 0x20001ad4, prints the MCU timestamp, the CP2MCU interrupt mask read from
+ * 0x40000098, the LMAC OutItem producer and consumer pointers with their delta
+ * ("LMAC OutItem_ptr prog=%u(%d) cmpl=%u(%d). detla:%u") and the transq TX
+ * count.  That is the same LMAC state BES's own on-chip build of this driver
+ * reads directly -- see bes2600/debug.c -- and the nearest thing this chip
+ * offers to the logging their SET_LMAC_LOG_MODE ioctl switches on.
+ *
+ * It goes to the firmware's trace sink, which has never been observed to
+ * produce anything here.  debugfs fw_debug triggers it anyway, since the cost
+ * is one register write the driver already makes on its bus error paths.
+ */
 #define BES_HOST_INT_REG_ID		(0x120)
 #define BES_HOST_INT			(1 << 0)
 #define BES_AP_WAKEUP_CFG		(1 << 1)

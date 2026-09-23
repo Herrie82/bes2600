@@ -2624,6 +2624,18 @@ int wsm_handle_rx(struct bes2600_common *hw_priv, int id,
 			ret = wsm_bt_ts_request(hw_priv, &wsm_buf);
 			break;
 		default:
+			/*
+			 * The MCU side has its own indication space and this
+			 * arm dropped everything it did not name, the same way
+			 * the 0x08xx arm above used to.  The firmware's
+			 * host_int_irq handler answers BES_SUBSYSTEM_WIFI_DEBUG
+			 * by dumping LMAC state, and where that dump comes out
+			 * is not known -- the chip's UART is silent.  If any of
+			 * it arrives over SDIO it arrives here, so say what
+			 * turned up rather than discarding it.
+			 */
+			bes_warn("unhandled MCU indication 0x%.4X, %ld bytes\n",
+				 id, (long)(wsm_buf.end - wsm_buf.begin));
 			break;
 		}
 	} else {
