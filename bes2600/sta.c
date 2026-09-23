@@ -63,6 +63,43 @@ module_param(join_probe, bool, 0644);
 MODULE_PARM_DESC(join_probe,
 	"send a probe request as part of JOIN (default 1); 0 joins using the scan results alone");
 
+/*
+ * Runtime gates for the JOIN-refusal hunt.
+ *
+ * Every one of these defaults to the behaviour the driver already has, so an
+ * unset module behaves exactly as before.  They exist because this failure is
+ * intermittent -- roughly half of 2.4GHz joins, never on 5GHz -- so telling
+ * two settings apart needs tens of attempts per arm, and rebuilding and
+ * reflashing between arms makes that impractical.  All are writable at
+ * runtime, so both arms can be run against one boot and one association.
+ *
+ *   join_pre_switch    re-issue the channel switch inside bes2600_join_work(),
+ *                      the way this driver did before the switch moved into
+ *                      bes2600_config().  A/B the move itself without a
+ *                      rebuild.
+ *   join_pre_delay_ms  wait this long after the pre-JOIN MIB writes before
+ *                      sending JOIN.  If the refusal is the radio still being
+ *                      busy, a delay should show it; if the rate is flat
+ *                      against delay, timing is not the cause.
+ *   join_retry         re-send a refused JOIN this many times before giving
+ *                      up.  Says whether a refusal is a transient the
+ *                      firmware would accept on a second ask.
+ */
+static bool join_pre_switch;
+module_param(join_pre_switch, bool, 0644);
+MODULE_PARM_DESC(join_pre_switch,
+	"re-issue the channel switch inside join_work (default 0; diagnostic A/B)");
+
+static int join_pre_delay_ms;
+module_param(join_pre_delay_ms, int, 0644);
+MODULE_PARM_DESC(join_pre_delay_ms,
+	"delay in ms between the pre-JOIN MIB writes and JOIN (default 0)");
+
+static int join_retry;
+module_param(join_retry, int, 0644);
+MODULE_PARM_DESC(join_retry,
+	"retry a refused JOIN this many times (default 0)");
+
 #define WEP_ENCRYPT_HDR_SIZE    4
 #define WEP_ENCRYPT_TAIL_SIZE   4
 #define WPA_ENCRYPT_HDR_SIZE    8
@@ -2460,6 +2497,24 @@ void bes2600_join_work(struct work_struct *work)
 		 * airtime split this driver asks for while Bluetooth is down.
 		 */
 
+		/* Diagnostic: put the switch back where it used to be. */
+		if (join_pre_switch) {
+			struct wsm_switch_channel ch = {
+				.channelMode = NL80211_CHAN_NO_HT << 4,
+				.channelSwitchCount = 0,
+				.newChannelNumber = conf->chandef.chan->hw_value,
+			};
+
+			if (!wsm_switch_channel(hw_priv, &ch, priv->if_id) &&
+			    hw_priv->channel_switch_in_progress) {
+				if (!wait_event_timeout(hw_priv->channel_switch_done,
+						!hw_priv->channel_switch_in_progress,
+						msecs_to_jiffies(BES2600_CHANNEL_SWITCH_TMO)))
+					bes_warn("[STA] join_pre_switch to %d did not complete\n",
+						 ch.newChannelNumber);
+			}
+		}
+
 		/* avoid lmac assert when wpa_supplicant connect to ap without scan */
 		probe_tmp.skb = ieee80211_probereq_get(hw_priv->hw, priv->vif->addr, NULL, 0, 0);
 		if (probe_tmp.skb) {
@@ -2490,7 +2545,29 @@ void bes2600_join_work(struct work_struct *work)
 			  join.channelNumber, join.band, join.bssid,
 			  atomic_read(&hw_priv->scan.in_progress));
 
+		/* Diagnostic: is the refusal just the radio still settling? */
+		if (join_pre_delay_ms > 0)
+			msleep(min(join_pre_delay_ms, 1000));
+
 		join_ret = wsm_join(hw_priv, &join, priv->if_id);
+
+		/*
+		 * Diagnostic: would the firmware take the same request a
+		 * moment later?  Nothing about the request changes between
+		 * attempts, so an accept on retry means the refusal is a
+		 * transient state in the chip rather than anything we sent.
+		 */
+		if (join_ret && join_retry > 0) {
+			int tries = min(join_retry, 5);
+			int n;
+
+			for (n = 1; n <= tries && join_ret; n++) {
+				msleep(20);
+				join_ret = wsm_join(hw_priv, &join, priv->if_id);
+				bes_warn("[STA] JOIN retry %d/%d: %s\n", n, tries,
+					 join_ret ? "refused again" : "ACCEPTED");
+			}
+		}
 
 		if (join_ret) {
 			memset(&priv->join_bssid[0],

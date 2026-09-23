@@ -1153,6 +1153,13 @@ int wsm_epta_cmd(struct bes2600_common *hw_priv, struct wsm_epta_msg *arg)
 	struct wsm_buf *buf = &hw_priv->wsm_cmd_buf;
 	static bool epta_lock_tx = false;
 
+	/* Diagnostic: say nothing to the arbiter at all. */
+	if (coex_epta_is_muted()) {
+		bes_warn("epta cmd suppressed (coex_epta_mute): wlan:%u bt:%u enable:%u\n",
+			 arg->wlan_duration, arg->bt_duration, arg->hw_epta_enable);
+		return 0;
+	}
+
 	if (arg->hw_epta_enable & (1 << 11))
 		arg->hw_epta_enable &= ~(3 << 10); // force TDD
 	else if (coex_is_fdd_mode())
@@ -1161,8 +1168,8 @@ int wsm_epta_cmd(struct bes2600_common *hw_priv, struct wsm_epta_msg *arg)
 	if (arg->hw_epta_enable != 3 && arg->hw_epta_enable != 4) { //use for wifi connect
 		///TODO: remove this hack. use hardware in disconnect mode
 		if (coex_is_wifi_inactive()) {
-			arg->wlan_duration = 20000;
-			arg->bt_duration = 80000;
+			arg->wlan_duration = coex_inactive_wlan_duration(20000);
+			arg->bt_duration = coex_inactive_bt_duration(80000);
 			arg->hw_epta_enable &= ~(0x3);
 		}
 		// if (coex_is_fdd_mode()) {

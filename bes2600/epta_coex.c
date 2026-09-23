@@ -42,6 +42,71 @@ static bool coex_force_fdd;
 module_param(coex_force_fdd, bool, 0644);
 MODULE_PARM_DESC(coex_force_fdd,
 	"force FDD coexistence on 2.4GHz as well (diagnostic)");
+
+/*
+ * coex_epta_mute - stop sending airtime commands to the firmware at all.
+ *
+ * Stronger than coex_force_fdd: FDD still tells the chip something about how
+ * to share the air, this tells it nothing and leaves whatever the firmware
+ * defaults to.  If JOIN refusals survive both, coexistence is not the cause
+ * and this whole line of enquiry closes.
+ *
+ * Bluetooth is not up on this device, so muting the arbiter costs nothing
+ * while testing.  It would matter on a device actually using BT, which is why
+ * it defaults off.
+ */
+static bool coex_epta_mute;
+module_param(coex_epta_mute, bool, 0644);
+MODULE_PARM_DESC(coex_epta_mute,
+	"do not send EPTA airtime commands to the firmware (diagnostic)");
+
+/*
+ * The hardcoded wlan:20000 bt:80000 in the GOT_IP branch below, made
+ * settable.  -1 keeps whatever the code already does; anything else replaces
+ * the two durations, so the split can be tried as, say, 102400/0 without a
+ * rebuild.
+ */
+static int coex_gotip_wlan = -1;
+static int coex_gotip_bt = -1;
+module_param(coex_gotip_wlan, int, 0644);
+module_param(coex_gotip_bt, int, 0644);
+MODULE_PARM_DESC(coex_gotip_wlan,
+	"override the WiFi airtime requested at GOT_IP, in us (-1 = leave alone)");
+MODULE_PARM_DESC(coex_gotip_bt,
+	"override the BT airtime requested at GOT_IP, in us (-1 = leave alone)");
+
+/*
+ * The same override for the other hardcoded 20000/80000, the one in
+ * wsm_epta_cmd() that fires whenever coex_is_wifi_inactive() is true.  That
+ * one is the more interesting of the two: it sits at the choke point every
+ * airtime command passes through, and "WiFi inactive" covers the window in
+ * which a connect is being attempted.  A JOIN issued while the chip has been
+ * told WiFi owns 20ms of a 102400us period, on a band where BT shares the
+ * air, is a plausible thing for the firmware to refuse.
+ */
+static int coex_inactive_wlan = -1;
+static int coex_inactive_bt = -1;
+module_param(coex_inactive_wlan, int, 0644);
+module_param(coex_inactive_bt, int, 0644);
+MODULE_PARM_DESC(coex_inactive_wlan,
+	"override the WiFi airtime used when WiFi is inactive, in us (-1 = leave alone)");
+MODULE_PARM_DESC(coex_inactive_bt,
+	"override the BT airtime used when WiFi is inactive, in us (-1 = leave alone)");
+
+bool coex_epta_is_muted(void)
+{
+	return coex_epta_mute;
+}
+
+int coex_inactive_wlan_duration(int dflt)
+{
+	return coex_inactive_wlan >= 0 ? coex_inactive_wlan : dflt;
+}
+
+int coex_inactive_bt_duration(int dflt)
+{
+	return coex_inactive_bt >= 0 ? coex_inactive_bt : dflt;
+}
 static uint8_t epta_conn_state; /* dafault invalid stat */
 static uint32_t epta_freeze_bitmap;  /*bit0: conn, bit1: tp, bit2: tts */
 static int epta_freezed_wlan_duration[EPTA_FREEZE_MAX] = {0};
@@ -406,7 +471,10 @@ void coex_set_wifi_conn(struct bes2600_common *hw_priv, uint8_t connect_status)
 			 * not been shown to cost anything.  Left as-is and
 			 * documented rather than changed on suspicion.
 			 */
-			coex_epta_set_connect(hw_priv, 20000, 80000, 3);
+			coex_epta_set_connect(hw_priv,
+				coex_gotip_wlan >= 0 ? coex_gotip_wlan : 20000,
+				coex_gotip_bt   >= 0 ? coex_gotip_bt   : 80000,
+				3);
 			coex_epta_recover(hw_priv, EPTA_FREEZE_SCANNING | EPTA_FREEZE_CONNECTING);
 		} else if (connect_status == EPTA_STATE_WIFI_CONNECTING) {
 			coex_epta_freeze(hw_priv, wlan_tdd_duration, EPTA_FREEZE_CONNECTING);

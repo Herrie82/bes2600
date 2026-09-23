@@ -56,6 +56,19 @@ MODULE_ALIAS("bes2600_wlan");
  */
 #define BES2600_RX_RETRY_MAX	6
 
+/*
+ * The same budget, settable at runtime.  The histogram this driver now keeps
+ * says depth 1 finds almost everything and depths 2-6 find single digits
+ * against hundreds of wasted iterations, so 2 is very likely the right
+ * number -- but that is worth about 2% of control reads, which is small
+ * enough that it deserves measuring rather than assuming.  Clamped to the
+ * array the histogram lives in.
+ */
+static int rx_retry_max = BES2600_RX_RETRY_MAX;
+module_param(rx_retry_max, int, 0644);
+MODULE_PARM_DESC(rx_retry_max,
+	"how many times to re-poll an empty SDIO control register (default 6)");
+
 struct sbus_priv {
 	struct sdio_func	*func;
 	struct bes2600_common	*core;
@@ -992,7 +1005,8 @@ static void sdio_rx_work(struct work_struct *work)
 		total_len = PACKET_TOTAL_LEN(ctrl_reg);
 		if (!total_len) {
 			bes2600_sdio_unlock(self);
-			if ((again == 1) && retry < BES2600_RX_RETRY_MAX) {
+			if ((again == 1) && retry < clamp(rx_retry_max, 0,
+							  BES2600_RX_RETRY_MAX)) {
 				retry++;
 				self->rx_retry_cnt++;
 				continue;
