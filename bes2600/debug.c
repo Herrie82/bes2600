@@ -597,6 +597,17 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
  * RUN_CODE command (FRAME_HEADER_RUN_CODE, 0xB4) and the firmware is
  * downloaded to RAM on every boot, so a stub that copies ROM somewhere the
  * host already reads back costs a power cycle if it is wrong.
+ *
+ * The chip's UART is not a way in either, though it looks like one.  The
+ * PineTab2 DTS wires uart1 "for wifi chip comm" with RX on a real uart pin and
+ * TX left as plain GPIO, which is the shape of a debug log tap, and the
+ * firmware carries hal_trace_open, hal_trace_output and
+ * hal_trace_crash_dump_register.  It is silent: /dev/ttyS1 is fe650000.serial,
+ * the pinmux is applied -- "pin 75 (gpio2-11): fe650000.serial (GPIO
+ * UNCLAIMED) function uart1 group uart1m0-xfer" -- and reading it produced
+ * zero bytes at 115200, 460800, 921600, 1500000, 2000000 and 3000000 baud,
+ * idle and during a scan.  Either trace output is not enabled in this build of
+ * the firmware or it goes somewhere else entirely.
  */
 
 static const struct file_operations fops_mib_probe = {
