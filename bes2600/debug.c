@@ -608,6 +608,52 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
  * zero bytes at 115200, 460800, 921600, 1500000, 2000000 and 3000000 baud,
  * idle and during a scan.  Either trace output is not enabled in this build of
  * the firmware or it goes somewhere else entirely.
+ *
+ * What the firmware would tell us, if we could ask, is now known.
+ * open-vela/vendor_bes ships prebuilt NuttX libraries -- libnx_bestbsp_ap.a on
+ * best1700_ep and best2003_ep -- built from BES's own copy of this driver at
+ * net/wifi_stack/v1/drv/cw1260/, with full DWARF.  wsm.o, sta.o, txrx.o, bh.o,
+ * fwio.o, queue.o and cw1200_sdio.o are all there, and their struct layouts
+ * match ours byte for byte, struct wsm_join included at 68 bytes.  That build
+ * runs on the chip's own MCU rather than across SDIO, so it reads LMAC state
+ * straight off the internal bus.  Its print_lmac_status() names the addresses:
+ *
+ *   0x82c00600   PAC_RXC_RX_CONTROL
+ *   0x82c00604   PAC_RXC_RX_BUFFER_IN_POINTER
+ *   0x82c00608   PAC_RXC_RX_BUFFER_OUT_POINTER
+ *   0x82c00624   PAC_RXC_RX_ERROR_COUNTERS_0
+ *   0x82c00628   PAC_RXC_RX_ERROR_COUNTERS_1
+ *   0x82c0062c   PAC_RXC_RX_ERROR_COUNTERS_2
+ *   0x82c00638   PAC_RXC_RX_STATE
+ *   0x80000678   sLmcEptaGlobal.u8ReqForMediumFlags
+ *   0x80000990   SchedulerEvents
+ *   0x80000d00   outptr
+ *   0x80000d04   out2ptr
+ *   0x80001520   pTxRequestFifo->FifoGet
+ *   0x80001524   pTxRequestFifo->FifoPut
+ *   0x800042b0   sLmcLocal.sTxQueue.head
+ *   0x800042b4   sLmcLocal.sTxQueue.Tail
+ *   0x8000b5c8   SuspendRxTaskMask
+ *   0x90000144   LMAC pc
+ *   0x90000148   LMAC lr
+ *
+ * This is what BES_IW_PRIV_CMD_ID_SET_LMAC_LOG_MODE in their bes_wl_priv.h
+ * switches on, and it is a memory read on a bus we do not sit on -- not a WSM
+ * command, and not a MIB.  Sweeping the unclaimed 0x10xx MIB IDs for a logging
+ * control would have found nothing, because there is nothing there to find.
+ *
+ * The same library has cw1200_cca_soft_reset(), which we do not:
+ *
+ *	val = readl(0x90100c00);
+ *	writel(val & ~1, 0x90100c00);
+ *	hal_sys_timer_delay_us(10);
+ *	writel(val | 1, 0x90100c00);
+ *
+ * cw1200_bss_loss_work() calls it before probing the AP, on the beacon-loss
+ * path only.  A CCA block that has latched busy is exactly what this link
+ * looks like from outside -- see the retry figures in txrx.c -- so it is worth
+ * knowing that BES's own driver kicks it.  Reaching 0x90100c00 from the host
+ * needs the same ST90TDS window that wedges the bus above, so it stays a note.
  */
 
 static const struct file_operations fops_mib_probe = {
