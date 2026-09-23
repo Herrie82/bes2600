@@ -118,10 +118,17 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  * shows it is not the driver's doing. On a 5GHz 40MHz association with the
  * same firmware, same driver and a worse signal:
  *
- *   association                signal    retries    throughput
- *   2.4GHz HT20 (ch 11)        -40 dBm   41-95%     9-15 Mbit/s
- *   5GHz HT40 (ch 44)          -53 dBm   13-18%     17-19 Mbit/s
- *   5GHz HT40 (ch 52)          -59 dBm    9-29%     17-57 Mbit/s
+ *   association                signal    retries    throughput   tx PHY
+ *   2.4GHz HT20 (ch 11)        -40 dBm   41-95%     9-15 Mbit/s   72 Mbit/s
+ *   2.4GHz HT20 (ch 6)         -55 dBm   54-60%     14-16         65
+ *   2.4GHz HT40 (ch 6)         -50 dBm   28-52%     14-16         150
+ *   5GHz   HT40 (ch 44)        -53 dBm   13-18%     17-19         135
+ *   5GHz   HT40 (ch 52)        -59 dBm    9-29%     17-57         135
+ *
+ * The HT40 row is the useful one. Getting the AP to advertise 20/40 doubled
+ * the transmit PHY rate from 65 to 150 Mbit/s and changed the delivered
+ * throughput not at all, which rules out channel width as the limit the same
+ * way the channel change ruled out congestion.
  *
  * Retries fall by an order of magnitude and throughput nearly doubles as the
  * signal gets worse, which is the opposite of what a driver-side retry
