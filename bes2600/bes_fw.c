@@ -49,7 +49,22 @@ static int bes_slave_rx_ready(struct platform_fw_t *fw_data, u8* buf_cnt,
 
 	do {
 		ret = bes2600_reg_read(0x108, buf_cnt, 1);
-		if (!(ret || buf_cnt)) {
+		/*
+		 * Wait for the slave to report a non-zero buffer count, which
+		 * is the whole point of the loop.  This tested buf_cnt, the
+		 * pointer, rather than *buf_cnt: a parameter that is never
+		 * NULL, so the condition was always false, the mdelay/continue
+		 * was dead code and the function returned on the first read no
+		 * matter what the chip said.
+		 *
+		 * That is why re-downloading firmware failed.  After a module
+		 * unload the chip is still running the firmware from the first
+		 * load and needs a moment before it will accept another, so
+		 * the first read comes back with zero buffers -- and without a
+		 * retry the download was declared ready against a slave that
+		 * was not, and died further in as -EBUSY.
+		 */
+		if (!ret && !*buf_cnt) {
 			mdelay(50);
 			continue;
 		} else if (ret) {
