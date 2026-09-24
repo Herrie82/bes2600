@@ -1186,6 +1186,16 @@ int wsm_epta_cmd(struct bes2600_common *hw_priv, struct wsm_epta_msg *arg)
 			arg->bt_duration = coex_inactive_bt_duration(80000);
 			arg->hw_epta_enable &= ~(0x3);
 		}
+		/*
+		 * The vendor's own version of the block below, behind a
+		 * parameter.  See the note in epta_coex.c.
+		 */
+		if (coex_want_bt_inactive_full_air()) {
+			arg->wlan_duration = 100000;
+			arg->bt_duration = 0;
+			arg->hw_epta_enable = 0;
+		}
+
 		// if (coex_is_fdd_mode()) {
 		// 	arg->wlan_duration = 100000;
 		// 	arg->bt_duration = 0;

@@ -65,6 +65,35 @@ static bool coex_fdd_mode;  /* fdd or fdd hybrid */
  */
 static bool coex_force_fdd;
 module_param(coex_force_fdd, bool, 0644);
+
+/*
+ * coex_bt_inactive_full_air - hand WiFi the whole period when BT is down.
+ *
+ * This is the vendor's own idea, shipped commented out in wsm_epta_cmd():
+ *
+ *   // } else {
+ *   //     if (coex_is_bt_inactive()) {
+ *   //             arg->wlan_duration = 100000;
+ *   //             arg->bt_duration = 0;
+ *   //             arg->hw_epta_enable = 0;
+ *   //     }
+ *   // }
+ *
+ * It is gated on coex_is_bt_inactive(), so it can only ever apply when the
+ * BT state machine says nothing is using the radio -- which makes it much
+ * safer than forcing FDD, whose effect on an active BT link is unknown.  Note
+ * it clears hw_epta_enable entirely rather than setting the FDD bit, so it is
+ * a third option and not the same experiment.
+ *
+ * Kept as a parameter rather than simply uncommented because the BT half of
+ * the comparison cannot be run on this hardware: hci0 never initialises, the
+ * controller times out on its first HCI command, so "BT inactive" is the only
+ * state this device can be measured in.
+ */
+static bool coex_bt_inactive_full_air;
+module_param(coex_bt_inactive_full_air, bool, 0644);
+MODULE_PARM_DESC(coex_bt_inactive_full_air,
+	"when BT is inactive, give WiFi the whole period and disable EPTA");
 MODULE_PARM_DESC(coex_force_fdd,
 	"force FDD coexistence on 2.4GHz as well (diagnostic)");
 
@@ -121,6 +150,11 @@ MODULE_PARM_DESC(coex_inactive_bt,
 bool coex_epta_is_muted(void)
 {
 	return coex_epta_mute;
+}
+
+bool coex_want_bt_inactive_full_air(void)
+{
+	return coex_bt_inactive_full_air && coex_is_bt_inactive();
 }
 
 int coex_inactive_wlan_duration(int dflt)

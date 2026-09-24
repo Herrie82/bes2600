@@ -84,6 +84,7 @@ uint8_t coex_get_conn_state(void);
 
 /* Diagnostic gates -- see the notes at the top of epta_coex.c. */
 bool coex_epta_is_muted(void);
+bool coex_want_bt_inactive_full_air(void);
 int coex_inactive_wlan_duration(int dflt);
 int coex_inactive_bt_duration(int dflt);
 
