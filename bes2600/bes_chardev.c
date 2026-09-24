@@ -1315,7 +1315,29 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	 * The LuneOS 6.6 kernel where Bluetooth worked set this (in the same
 	 * commit that added hciattach.sh) and this tree had it off, which
 	 * looked like the difference.  It is not: with it on, hci0 still never
-	 * initialises.  Opcode 0x1003 times out with -110 exactly as before
+	 * initialises.
+	 *
+	 * It may however have done something else.  Turning it on is the only
+	 * change to default behaviour between two builds whose 2.4GHz
+	 * throughput differs by 60%: 18.8 Mbit/s mean before, 30.0 after, both
+	 * measured on the default coex arm with power save off, at the same
+	 * -38 dBm, on the same channel and AP.  The other two commits in
+	 * between add parameters that default to inactive.
+	 *
+	 * The obvious confounds do not account for it.  The download source is
+	 * remote, but the same URL sustains 190-286 Mbit/s from a desktop on
+	 * the same WAN, so it is nowhere near the limit.  Signal was identical
+	 * in both runs.  What is left is this flag, and the only mechanism it
+	 * has is timing: bton_pending makes
+	 * bes2600_chrdev_set_sbus_priv_data() issue BES_SUBSYSTEM_BT_ACTIVE
+	 * inside the probe sequence, instead of leaving it to whenever
+	 * hciattach.sh writes BT_ON afterwards.  A coexistence state machine
+	 * that is told about Bluetooth during bring-up rather than mid-flight
+	 * is a plausible reason for the arbitration to behave differently.
+	 *
+	 * Unproven: four transfers per build, no A/B, and both runs also
+	 * crossed a reboot.  Confirming it needs one build with this set back
+	 * to n, interleaved against one with it on.  Opcode 0x1003 times out with -110 exactly as before
 	 * and the adapter keeps an all-zero address.  Setting it is still the
 	 * right default -- it matches the tree that worked and it costs
 	 * nothing -- but it is not the fix, and the remaining suspect is the
