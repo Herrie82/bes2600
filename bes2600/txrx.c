@@ -167,6 +167,24 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  * 0 = 1M CCK, 3 = 11M CCK, 6 = 6M OFDM, 8 = 12M OFDM.
  *
  *   echo 3 > /sys/module/bes2600/parameters/tx_low_rate_idx
+ *
+ * Read the comparison in the commit that added this before assuming there is
+ * a throughput deficit to recover.  An Intel AX210 on the same AP, the same
+ * channel and the same desk measured 34.2 Mbit/s mean against this device's
+ * 19.6 -- but it is 2x2 where this part is 1x1, so it has twice the PHY rate,
+ * and the two convert PHY to TCP at 11.4% and 13.1% respectively.  This
+ * device is not converting airtime worse than the Intel; it has half the
+ * radio and the channel is busy for both (the AX210's own samples ranged from
+ * 11 to 67 Mbit/s).
+ *
+ * The retry counter is the part that still does not add up: 108% here against
+ * 0.6% there, with 14 dB more signal, while delivering normal efficiency.  A
+ * station genuinely retransmitting every frame could not be that efficient,
+ * so the likeliest reading is that the count is inflated rather than the
+ * retries being real -- see bes2600_tx_confirm_cb(), which applies
+ * arg->ackFailures to each frame and deliberately does not report
+ * IEEE80211_TX_STAT_AMPDU, so an aggregate's failures are plausibly charged
+ * once per subframe.  That would also explain values above 100%.
  */
 static int tx_low_rate_idx = -1;
 module_param(tx_low_rate_idx, int, 0644);
