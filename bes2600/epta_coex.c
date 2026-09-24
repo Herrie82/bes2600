@@ -35,16 +35,33 @@ static bool coex_fdd_mode;  /* fdd or fdd hybrid */
  *
  *   echo 1 > /sys/module/bes2600/parameters/coex_force_fdd
  *
- * Tested, and the answer is no.  Forcing FDD associated 6 of 8 against a
- * control's 6 of 8 in the run where the two sat close together, and looked
- * worse in two earlier runs.  Muting the arbiter outright is actively harmful:
- * coex_epta_mute scored 0 of 8 while the arms either side of it scored 5 and
- * 6, so that is not drift -- the firmware needs to be told about airtime, and
- * coexistence is a requirement here rather than the cause of anything.
+ * For JOIN refusals the answer is no: forcing FDD associated 6 of 8 against a
+ * control's 6 of 8.  Muting the arbiter outright is actively harmful --
+ * coex_epta_mute scored 0 of 8 while the arms either side scored 5 and 6 --
+ * so the firmware does need to be told about airtime.
  *
- * The refusal turned out to be transient chip state; see the note on
- * join_retry in sta.c.  These gates stay because they are cheap and they are
- * what ruled coexistence out.
+ * For THROUGHPUT the answer is yes, and it is worth acting on.  Interleaved
+ * 15-second transfers on one 2.4GHz association, nine rounds each way:
+ *
+ *   TDD (default)   mean 19.8 Mbit/s, median 18, retries 102%
+ *   FDD (forced)    mean 29.0 Mbit/s, median 28, retries  83%
+ *
+ * FDD was faster in 8 of the 9 paired rounds (sign test p = 0.02).  For scale,
+ * the same device on 5GHz -- which always takes the FDD path, because
+ * coex_rssi_update() sends channels above 14 there -- does 80 Mbit/s at 41%
+ * retries.
+ *
+ * The mechanism is not the airtime split.  The log for that run carries
+ * nineteen "wlan:102400 bt:0" commands and not one 20000/80000, so WiFi
+ * already owned the entire TDD period both ways.  What changes is bit 10 of
+ * hw_epta_enable, LMAC_COEX_MODE_FDD, which wsm_epta_cmd() sets from
+ * coex_is_fdd_mode().  So TDD mode costs throughput on this chip even when
+ * nothing is sharing the air -- and on this device nothing is: hci0 is down.
+ *
+ * The obvious change is to take the FDD path on 2.4GHz too whenever Bluetooth
+ * is inactive, which coex_is_bt_inactive() already answers.  That is not done
+ * here: it needs testing with Bluetooth actually up, on hardware where that
+ * works, before a coexistence default is changed for everyone.
  */
 static bool coex_force_fdd;
 module_param(coex_force_fdd, bool, 0644);
