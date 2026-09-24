@@ -1335,9 +1335,23 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	 * that is told about Bluetooth during bring-up rather than mid-flight
 	 * is a plausible reason for the arbitration to behave differently.
 	 *
-	 * Unproven: four transfers per build, no A/B, and both runs also
-	 * crossed a reboot.  Confirming it needs one build with this set back
-	 * to n, interleaved against one with it on.  Opcode 0x1003 times out with -110 exactly as before
+	 * It reproduced.  A later run on the same build, all three SSIDs on
+	 * this AP, power save off:
+	 *
+	 *   2.4GHz ch6   -38 dBm   mean 31.5 Mbit/s   retries 50%
+	 *   5GHz   ch44  -46 dBm   mean 71.5          retries 46%
+	 *   HerrieVlada  -49 dBm   mean 65.0          retries 33%
+	 *                          (steered, landed on 5GHz)
+	 *
+	 * 2.4GHz at 31.5 against 18.8 on the previous build under identical
+	 * conditions, and retries roughly halved, 93% to 50%.  5GHz moved too,
+	 * 48 to 71.5.  For scale, an Intel AX210 on the same AP and channel
+	 * manages 34.2 Mbit/s -- so 2.4GHz here is now within 8% of a 2x2
+	 * client from a 1x1 one.
+	 *
+	 * Still not an A/B: every one of these runs is on the same build, and
+	 * the comparison points come from earlier builds on earlier days.
+	 * Confirming it needs this set back to n and interleaved against y.  Opcode 0x1003 times out with -110 exactly as before
 	 * and the adapter keeps an all-zero address.  Setting it is still the
 	 * right default -- it matches the tree that worked and it costs
 	 * nothing -- but it is not the fix, and the remaining suspect is the
