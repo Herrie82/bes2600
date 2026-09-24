@@ -1108,6 +1108,34 @@ int bes2600_load_firmware_sdio(struct sbus_ops *ops, struct sbus_priv *priv)
 	bes2600_factory_unlock();
 #endif
 
+	/*
+	 * WiFi and Bluetooth firmware are mutually exclusive here, and that is
+	 * why Bluetooth does not work on the PineTab2.
+	 *
+	 * fw_type defaults to BES2600_FW_TYPE_WIFI_SIGNAL, so the only image
+	 * ever downloaded is best2002_fw_sdio.bin.  best2002_fw_sdio_btrf.bin
+	 * ships alongside it and is never loaded.  The BT controller therefore
+	 * has nothing running on it: hciattach owns ttyS1 and creates hci0,
+	 * but the far end never answers, so every command times out --
+	 * "Opcode 0x1003 failed: -110" -- and the adapter keeps an all-zero
+	 * address.  /dev/bes2600 BT_ON does reach the driver, which logs
+	 * "enable BT" and sends BES_SUBSYSTEM_BT_ACTIVE, but a subsystem
+	 * enable cannot substitute for firmware that was never downloaded.
+	 *
+	 * Switching fw_type to BES2600_FW_TYPE_BT at runtime does not rescue
+	 * it either.  bes2600_op_change_fw_type() has to take the chip down
+	 * and re-probe it, the disconnect never arrives, and it warns at
+	 * bes_chardev.c:484.  After that the chip will not accept another
+	 * download at all -- bes_slave_rx_ready returns -EBUSY, the same
+	 * re-download failure seen elsewhere in this driver -- so WiFi does
+	 * not come back and the board needs a power cycle.  Do not try it on
+	 * a device you cannot physically reach.
+	 *
+	 * It would not be a fix even if it worked, since that mode turns WiFi
+	 * off.  A combo part wants one image serving both, which is what the
+	 * vendor's own NuttX build does.  Whether best2002_fw_sdio.bin
+	 * contains a BT stack at all has not been established.
+	 */
 	bes_devel("%s fw_type:%d.\n", __func__, fw_type);
 	if(fw_type == BES2600_FW_TYPE_BT) {
 		ret = bes2600_load_bt_firmware(temp_fw_data);
