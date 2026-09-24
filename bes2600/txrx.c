@@ -1901,6 +1901,21 @@ void bes2600_rx_cb(struct bes2600_vif *priv,
 		 * Whatever they are, the information needed here is not in the
 		 * RX indication, and the reported rate can only be explained,
 		 * not corrected.
+		 *
+		 * Be careful what you conclude from "iw ... link" because of
+		 * this.  The rx bitrate it prints is always computed as HT20
+		 * long GI, so a 5GHz HT40 short-GI link that is really running
+		 * MCS5 at 135 Mbit/s is reported as 52.  Measured here: a 5GHz
+		 * transfer that reported "52.0 MBit/s MCS 5" throughout
+		 * delivered 48 Mbit/s of TCP, which 52 Mbit/s of PHY cannot
+		 * carry.  The number is a floor, not the rate.
+		 *
+		 * This has misled work on this driver more than once, including
+		 * a conclusion during this branch's development that the AP was
+		 * refusing to send HT40 and the card was "always selecting 20".
+		 * It was not: only the reporting is fixed at HT20.  The TX rate
+		 * in the same output is real, which makes the asymmetry look
+		 * like a link problem when it is a reporting one.
 		 */
 		hdr->encoding |= RX_ENC_HT;
 		hdr->rate_idx = arg->rxedRate - 14;
