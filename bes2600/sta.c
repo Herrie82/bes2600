@@ -132,20 +132,23 @@ MODULE_PARM_DESC(join_pre_delay_ms,
  * this state", and the answer is somewhere before the JOIN.  join_retry and
  * join_retry_delay_ms stay as diagnostics, defaulted off.
  *
- * A warning about measuring any of this.  The association rate on this device
- * falls with uptime -- 6 of 8 early in a boot, 3 of 16 half an hour later --
- * and the end of one such decline is not a WiFi failure at all: a test script
- * running over ssh started reporting "grep: command not found", "sed: command
- * not found" and finally "script file read error: Input/output error", after
- * which sshd stopped answering while the device still replied to pings.  That
- * is the root filesystem going away, not the radio.
+ * A warning about measuring any of this.  Arm-versus-arm comparisons on this
+ * device need interleaving or a reboot between arms, because a run can go bad
+ * partway through for reasons that have nothing to do with the setting under
+ * test and still produce numbers that look like results.
  *
- * It matters here for two reasons.  Any arm-versus-arm comparison taken late
- * in a boot may be measuring a sick system rather than the setting under test,
- * so interleave the arms or reboot between them.  And the WiFi chip sits on
- * mmc2 while the rootfs sits on its own controller, so if these turn out to
- * share a failure it belongs in the MMC layer rather than here -- worth
- * checking before any more of this failure is blamed on the driver.
+ * The example worth remembering is a run whose last arms scored zero while a
+ * test script began reporting "grep: command not found" and then "script file
+ * read error: Input/output error".  That was the SD card having been removed
+ * by hand mid-run -- physical, external, and nothing to do with the driver or
+ * with any wear-out.  The earlier reading of the same shape, 6 of 8 early in a
+ * boot against 3 of 16 later, was written up at the time as the device
+ * degrading with uptime; with the cause known that claim does not stand up,
+ * and no genuine uptime-dependent decline has been demonstrated here.
+ *
+ * The practical rule survives the retraction: check the system is healthy
+ * before trusting a low score, and never compare an arm run late against an
+ * arm run early.
  */
 static int join_retry;
 module_param(join_retry, int, 0644);
