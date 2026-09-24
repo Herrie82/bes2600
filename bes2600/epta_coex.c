@@ -58,7 +58,15 @@ static bool coex_fdd_mode;  /* fdd or fdd hybrid */
  * two runs also had different link rates -- HT40 at 150 Mbit/s the first
  * time, HT20 at 72.2 the second -- so conditions moved underneath both.
  *
- * What does hold across all 24 rounds is that retries predict throughput and
+ * A third run settled the power-save question: with power save off, at -38
+ * dBm and HT40, TDD gave 18.8 Mbit/s mean against FDD 23.5 and the full-air
+ * block 23.0, FDD ahead in 2 of 4 paired rounds.  TDD has now measured 19.8,
+ * 16.6 and 18.8 across three runs with power save on, off, HT20 and HT40, so
+ * the seconds-long power-save stalls documented in ap.c were not what was
+ * corrupting these numbers either.  2.4GHz is simply about a quarter of what
+ * the same device does on 5GHz.
+ *
+ * What does hold across all 28 rounds is that retries predict throughput and
  * nothing else does.  Pooling the second run's fifteen points, transfers with
  * under 90% retries averaged 25.3 Mbit/s and those at or above 90% averaged
  * 11.1.  Same-setting throughput ranged from 4 to 27 Mbit/s, which is a
