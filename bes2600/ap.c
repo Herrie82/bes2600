@@ -991,6 +991,36 @@ void bes2600_bss_info_changed(struct ieee80211_hw *dev,
 		}
 	}
 
+	/*
+	 * Power save costs seconds of latency on this chip, not milliseconds.
+	 *
+	 * Measured against the local gateway on an idle 2.4GHz link at -46 dBm,
+	 * DTIM 1, beacon 100ms, three interleaved rounds:
+	 *
+	 *   PS on    avg 103 / 833 / 831 ms    max 1202 / 4752 / 4725 ms
+	 *   PS off   avg 3.8 /  10 /   8.6 ms  max    9 /  101 /   58 ms
+	 *
+	 * Zero packet loss either way, so frames are being delayed rather than
+	 * dropped.  With DTIM 1 the worst a correctly behaving station should
+	 * see is about one beacon interval; 4.7 seconds is fifty times that.
+	 *
+	 * This is worth knowing beyond battery life.  It is why ssh to this
+	 * device over WiFi routinely dies in the banner exchange while pings
+	 * still answer, and it is a good candidate for the episodes during this
+	 * work where the device looked wedged -- reachable by ICMP, TCP opening
+	 * but never delivering data -- which were repeatedly misread as a sick
+	 * userspace.  "iw dev wlan0 set power_save off" makes those go away.
+	 *
+	 * The cause is not established.  The mode selection below matches
+	 * mainline cw1200 (which does it from IEEE80211_CONF_CHANGE_PS rather
+	 * than BSS_CHANGED_PS, but computes the same thing), and neither driver
+	 * sets minAutoPsPollPeriod, so that is not a divergence either.  One
+	 * asymmetry is ours alone: the call at the bottom of this block fires
+	 * only when pmMode is WSM_PSM_ACTIVE, so disabling power save reaches
+	 * the firmware immediately while enabling it is deferred to the filter
+	 * path in bes2600_update_filtering().  Mainline has no such condition.
+	 * Whether that matters here has not been tested.
+	 */
 	if (changed & BSS_CHANGED_PS) {
 		if (cfg->ps == false)
 			priv->powersave_mode.pmMode = WSM_PSM_ACTIVE;
