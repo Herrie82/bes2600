@@ -190,6 +190,21 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  *
  *   echo 14 > /sys/module/bes2600/parameters/tx_low_rate_idx
  *
+ * Measured, and it changes nothing.  Four interleaved rounds on 2.4GHz at
+ * -38 dBm, sixteen transfers:
+ *
+ *   A  0  1M CCK (default)   mean 30.0 Mbit/s, retries 47%
+ *   B  3  11M CCK            mean 31.2,        retries 46%
+ *   C  6  6M OFDM            mean 26.5,        retries 62%
+ *   D 14  MCS0 (wfx style)   mean 28.0,        retries 52%
+ *
+ * The default is not worst, MCS0 is not best, and the spread within any one
+ * arm (21-38 Mbit/s overall, stdev 4.9) is as wide as the differences between
+ * them.  So the divergence from wfx is real in the source but does not show up
+ * in behaviour here: the ladder evidently does not reach its bottom rung often
+ * enough for the choice of rung to matter.  Keep the knob for future work,
+ * leave the default alone.
+ *
  * Read the comparison in the commit that added this before assuming there is
  * a throughput deficit to recover.  An Intel AX210 on the same AP, the same
  * channel and the same desk measured 34.2 Mbit/s mean against this device's
