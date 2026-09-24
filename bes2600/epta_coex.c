@@ -40,16 +40,35 @@ static bool coex_fdd_mode;  /* fdd or fdd hybrid */
  * coex_epta_mute scored 0 of 8 while the arms either side scored 5 and 6 --
  * so the firmware does need to be told about airtime.
  *
- * For THROUGHPUT the answer is yes, and it is worth acting on.  Interleaved
- * 15-second transfers on one 2.4GHz association, nine rounds each way:
+ * For THROUGHPUT it looked like yes and then did not replicate.  The first
+ * run, nine interleaved rounds each way on one 2.4GHz association, gave
  *
  *   TDD (default)   mean 19.8 Mbit/s, median 18, retries 102%
  *   FDD (forced)    mean 29.0 Mbit/s, median 28, retries  83%
  *
- * FDD was faster in 8 of the 9 paired rounds (sign test p = 0.02).  For scale,
- * the same device on 5GHz -- which always takes the FDD path, because
- * coex_rssi_update() sends channels above 14 there -- does 80 Mbit/s at 41%
- * retries.
+ * with FDD ahead in 8 of 9 paired rounds, sign test p = 0.02.  A second run
+ * on a later boot, five rounds, three ways, gave
+ *
+ *   TDD (default)         mean 16.6, median 18, retries 106%
+ *   FDD (forced)          mean 17.6, median 16, retries 114%
+ *   bt_inactive_full_air  mean 19.0, median 19, retries  92%
+ *
+ * with FDD ahead in 2 of 5 and the full-air block in 3 of 5.  The effect did
+ * not survive, so the p value from the first run should not be trusted: the
+ * two runs also had different link rates -- HT40 at 150 Mbit/s the first
+ * time, HT20 at 72.2 the second -- so conditions moved underneath both.
+ *
+ * What does hold across all 24 rounds is that retries predict throughput and
+ * nothing else does.  Pooling the second run's fifteen points, transfers with
+ * under 90% retries averaged 25.3 Mbit/s and those at or above 90% averaged
+ * 11.1.  Same-setting throughput ranged from 4 to 27 Mbit/s, which is a
+ * spread no coexistence bit is producing.  2.4GHz here has eight other APs
+ * visible; that is the more likely driver of the retries, and coex mode is
+ * not the lever it appeared to be.
+ *
+ * The band gap is the solid part: the same device on 5GHz -- which always
+ * takes the FDD path, because coex_rssi_update() sends channels above 14
+ * there -- does 80 Mbit/s at 41% retries, consistently.
  *
  * The mechanism is not the airtime split.  The log for that run carries
  * nineteen "wlan:102400 bt:0" commands and not one 20000/80000, so WiFi
@@ -58,10 +77,10 @@ static bool coex_fdd_mode;  /* fdd or fdd hybrid */
  * coex_is_fdd_mode().  So TDD mode costs throughput on this chip even when
  * nothing is sharing the air -- and on this device nothing is: hci0 is down.
  *
- * The obvious change is to take the FDD path on 2.4GHz too whenever Bluetooth
- * is inactive, which coex_is_bt_inactive() already answers.  That is not done
- * here: it needs testing with Bluetooth actually up, on hardware where that
- * works, before a coexistence default is changed for everyone.
+ * Changing the 2.4GHz default was the obvious next step when the first run
+ * stood.  It is not justified now: the gain does not reproduce, and it could
+ * not be validated with Bluetooth active in any case, since Bluetooth does
+ * not come up on this hardware at all.
  */
 static bool coex_force_fdd;
 module_param(coex_force_fdd, bool, 0644);
