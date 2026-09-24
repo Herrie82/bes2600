@@ -105,6 +105,22 @@ MODULE_PARM_DESC(join_pre_delay_ms,
  * so the refusal is transient state inside the chip rather than anything this
  * driver sends, which is why every request-side theory came back negative.
  *
+ * First, how often this actually happens, measured on a device known to be
+ * healthy -- 48 connects in one boot, all three settings interleaved:
+ *
+ *   associated                   46 of 48   (96%)
+ *   connects seeing any refusal   8 of 48   (17%)
+ *   connects that failed          2 of 48
+ *
+ * So a refused JOIN is not usually a failed connect.  mac80211 re-authenticates
+ * and gets in, and the user sees nothing.  Earlier readings of this same script
+ * put association at 3 of 16, and the numbers that framed this bug as "2.4GHz
+ * refuses about half the time" came from runs in that state; the SD card in
+ * that device was loose or absent for an unknown part of that work, so none of
+ * those rates can be trusted and the ones here supersede them.  What is left is
+ * a real but occasional refusal that costs latency on a connect rather than the
+ * connect itself.
+ *
  * Retrying does not clear it, and the reason is that the refusal is sticky.
  *
  * Counting refusals per connect over 16 attempts: of the 11 connects that saw
@@ -115,13 +131,14 @@ MODULE_PARM_DESC(join_pre_delay_ms,
  * budget, roughly half a second, and the retries mac80211 issues 160-175ms
  * apart fail together.
  *
- * That kills the in-driver retry outright rather than just at 20ms.  An
- * interleaved A/B -- alternating the setting attempt by attempt so both arms
- * saw the same device degradation -- gave 5 of 8 associations with three
- * retries against 6 of 8 with none, overturning only 3 of 22 refusals.  Any
- * delay short enough to sit inside bes2600_join_work() is inside the sticky
- * window, and a delay long enough to outlast it would block the workqueue
- * past the timeout it is trying to beat.
+ * That kills the in-driver retry outright rather than just at 20ms.  Two
+ * interleaved A/Bs agree: 5 of 8 against 6 of 8 on the suspect device, and 8
+ * of 8 against 8 of 8 on the healthy one, where a real effect had room to show
+ * itself and did not.  Any delay short enough to sit inside
+ * bes2600_join_work() is inside the sticky window, and a delay long enough to
+ * outlast it would block the workqueue past the timeout it is trying to beat.
+ * A 300ms settling delay before the JOIN was measured on the healthy device
+ * too, 8 of 8 either way, so the chip is not simply short of time.
  *
  * It is also not the coexistence TDD period, which would have been the tidy
  * answer: that period is 102400us, and two retries 175.5ms and 160.5ms apart
