@@ -27,7 +27,11 @@ CONFIG_BES2600_NON_POWER_OF_TWO_BLOCKSIZES ?= n
 CONFIG_BES2600_CALIB_FROM_LINUX         ?= y
 
 CONFIG_BES2600_WIFI_BOOT_ON             ?= y
-CONFIG_BES2600_BT_BOOT_ON               ?= n
+# Enable the chip's Bluetooth subsystem as part of the probe sequence rather
+# than leaving it to a later BT_ON.  The LuneOS kernel where Bluetooth worked
+# on this board set exactly this (with CONFIG_BES2600_BT, which is USB-only
+# and not wanted here) -- see bes_chardev.c where bton_pending is consumed.
+CONFIG_BES2600_BT_BOOT_ON               ?= y
 
 BES2600_GPIO_WAKEUP_AP                  ?= n
 BES2600_WRITE_DPD_TO_FILE               ?= n

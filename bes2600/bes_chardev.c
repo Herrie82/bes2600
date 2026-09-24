@@ -1305,6 +1305,27 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 #else
 	bes2600_cdev.wifi_opened = false;
 #endif
+	/*
+	 * Marking BT open here is what gets its subsystem enabled inside the
+	 * probe sequence: bes2600_chrdev_set_sbus_priv_data() consumes
+	 * bton_pending as soon as the bus comes up and issues the BT_ON
+	 * subsystem switch there, rather than leaving it to whenever userspace
+	 * happens to write BT_ON.
+	 *
+	 * That ordering looks like why Bluetooth worked on the LuneOS 6.6
+	 * kernel and not here.  That tree set CONFIG_BES2600_BT_BOOT_ON=y (in
+	 * the same commit that added hciattach.sh); this one defaulted it off,
+	 * so the subsystem was only ever switched on well after the firmware
+	 * had finished coming up.  The driver does log "enable BT" when
+	 * userspace asks later, so the command is reaching the chip -- it is
+	 * the timing that differs, and the BT controller on ttyS1 never
+	 * answers a single HCI command.
+	 *
+	 * Note the 6.6 tree also set CONFIG_BES2600_BT=y.  That is not
+	 * wanted here: it only adds bes2600_btusb.o, which is a USB transport
+	 * for USB-attached parts, and the file is not even present in this
+	 * tree.  PineTab2 is SDIO with HCI over UART.
+	 */
 #ifdef CONFIG_BES2600_BT_BOOT_ON
 	bes2600_cdev.bt_opened = true;
 	bes2600_cdev.bton_pending = true;
