@@ -162,11 +162,33 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  *
  * The fallback itself is not a local invention: the vendor's own NuttX build
  * of this driver has the same low_rate_idx and low_rate_count in the same
- * place.  What is untested is whether 1 Mbit/s is the right choice on a band
- * this congested.  Useful values are hardware rate ids from bes2600_rates[]:
- * 0 = 1M CCK, 3 = 11M CCK, 6 = 6M OFDM, 8 = 12M OFDM.
+ * place.  What is wrong with it is which rate it picks.
  *
- *   echo 3 > /sys/module/bes2600/parameters/tx_low_rate_idx
+ * Silicon Labs' wfx driver is the maintained, in-mainline descendant of this
+ * same ST-Ericsson lineage, and wfx_tx_fixup_rates() in
+ * drivers/net/wireless/silabs/wfx/data_tx.c does the equivalent job:
+ *
+ *     // Ensure that MCS0 or 1Mbps is present at the end of the retry list
+ *     rates[i].idx = 0;
+ *     rates[i].count = 8;
+ *     rates[i].flags = rates[0].flags & IEEE80211_TX_RC_MCS;
+ *
+ * Note the last line.  When the primary rate is HT, wfx's bottom rung is
+ * MCS0; only a legacy primary gets 1 Mbit/s.  This driver's block runs only
+ * when the primary IS HT -- "if (rates[0].flags & IEEE80211_TX_RC_MCS)" --
+ * and then appends 1 Mbit/s CCK anyway on 2.4GHz.  That is the opposite
+ * choice in exactly the case wfx singles out.
+ *
+ * It matters because of airtime.  A 1500 byte frame is about 12ms at 1 Mbit/s
+ * CCK and about 0.8ms at MCS0 on a 40MHz short-GI link: fifteen times the
+ * occupancy every time the ladder bottoms out, on the band that is already
+ * congested.
+ *
+ * Useful values are hardware rate ids: the legacy table is 0 = 1M CCK,
+ * 3 = 11M CCK, 6 = 6M OFDM, 8 = 12M OFDM, and the MCS table continues at
+ * 14 = MCS0 through 21 = MCS7.  So 14 reproduces what wfx does:
+ *
+ *   echo 14 > /sys/module/bes2600/parameters/tx_low_rate_idx
  *
  * Read the comparison in the commit that added this before assuming there is
  * a throughput deficit to recover.  An Intel AX210 on the same AP, the same
@@ -403,8 +425,10 @@ static int tx_policy_build(const struct bes2600_common *hw_priv,
 		if (hw_priv->channel != NULL && hw_priv->channel->hw_value > 14)
 			low_rate_idx = 6;  /* set default 11a 6M */
 
-		/* Diagnostic override; see the note on tx_low_rate_idx. */
-		if (tx_low_rate_idx >= 0 && tx_low_rate_idx <= 13)
+		/* Diagnostic override; see the note on tx_low_rate_idx.  The
+		 * range covers the legacy table (0-13) and the MCS table
+		 * (14-21 == MCS0-7), so an HT fallback can be selected. */
+		if (tx_low_rate_idx >= 0 && tx_low_rate_idx <= 21)
 			low_rate_idx = tx_low_rate_idx;
 
 		rateid = low_rate_idx;
