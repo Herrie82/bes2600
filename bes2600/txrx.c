@@ -185,6 +185,28 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  * arg->ackFailures to each frame and deliberately does not report
  * IEEE80211_TX_STAT_AMPDU, so an aggregate's failures are plausibly charged
  * once per subframe.  That would also explain values above 100%.
+ *
+ * There is a second implementation worth comparing against, already in the
+ * kernel LuneOS builds.  megi's tree carries BES2600 support merged into the
+ * mainline cw1200 driver -- drivers/net/wireless/st/cw1200, with bes2600.c
+ * added to cw1200_core -- where bes2600.c is only the firmware loader and the
+ * SDIO register map, and txrx.c, sta.c and wsm.c are mainline's, unmodified.
+ *
+ * That driver therefore has none of what this one carries: no low_rate_idx
+ * fallback, no EPTA airtime arbitration (its only "coex" is mainline's
+ * per-frame WSM_EPTA_PRIORITY tagging), and no vendor power-save parameters.
+ * It advertises mainline's capabilities -- 8K A-MPDU, no HT40, no short GI,
+ * rx_highest 0x41.
+ *
+ * LuneOS disables it on purpose -- "# CONFIG_CW1200 is not set" in the
+ * pinetab2 extra.cfg -- because both drivers claim SDIO device 0x2002 and
+ * this one is further along.  As a diagnostic though it is the cleanest
+ * control available for anything suspected of living in the vendor code: the
+ * AX210 comparison ruled out the hardware and the channel, but it could not
+ * rule out this driver.  Enabling CONFIG_CW1200 for one boot would put an
+ * independent stack on the same silicon.  Compare retry behaviour rather than
+ * raw throughput -- without HT40 or SGI its PHY rate tops out near 72 Mbit/s
+ * against 150 here.
  */
 static int tx_low_rate_idx = -1;
 module_param(tx_low_rate_idx, int, 0644);
