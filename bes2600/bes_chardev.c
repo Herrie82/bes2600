@@ -1312,14 +1312,16 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	 * subsystem switch there, rather than leaving it to whenever userspace
 	 * happens to write BT_ON.
 	 *
-	 * That ordering looks like why Bluetooth worked on the LuneOS 6.6
-	 * kernel and not here.  That tree set CONFIG_BES2600_BT_BOOT_ON=y (in
-	 * the same commit that added hciattach.sh); this one defaulted it off,
-	 * so the subsystem was only ever switched on well after the firmware
-	 * had finished coming up.  The driver does log "enable BT" when
-	 * userspace asks later, so the command is reaching the chip -- it is
-	 * the timing that differs, and the BT controller on ttyS1 never
-	 * answers a single HCI command.
+	 * The LuneOS 6.6 kernel where Bluetooth worked set this (in the same
+	 * commit that added hciattach.sh) and this tree had it off, which
+	 * looked like the difference.  It is not: with it on, hci0 still never
+	 * initialises.  Opcode 0x1003 times out with -110 exactly as before
+	 * and the adapter keeps an all-zero address.  Setting it is still the
+	 * right default -- it matches the tree that worked and it costs
+	 * nothing -- but it is not the fix, and the remaining suspect is the
+	 * firmware: best2002_fw_sdio_btrf.bin is never downloaded, and
+	 * bes2600_load_firmware() treats it as mutually exclusive with the
+	 * WiFi image.
 	 *
 	 * Note the 6.6 tree also set CONFIG_BES2600_BT=y.  That is not
 	 * wanted here: it only adds bes2600_btusb.o, which is a USB transport
