@@ -13,6 +13,7 @@
 #include <net/sock.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
+#include <linux/moduleparam.h>
 
 #include "bes2600.h"
 #include "wsm.h"
@@ -147,6 +148,31 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  * All three are short of the 34.5 Mbit/s the WAN provides, so something else
  * is in the way too. It is not the retry policy.
  */
+/*
+ * tx_low_rate_idx - the hardware rate id tx_policy_build() appends as the
+ * last-resort fallback on every HT frame.  -1 keeps what the driver does
+ * today: 0 on 2.4GHz, which is 1 Mbit/s CCK, and 6 on 5GHz, which is 6 Mbit/s
+ * OFDM.
+ *
+ * Those two are not equivalent in cost.  A 1500 byte frame takes about 12ms of
+ * airtime at 1 Mbit/s and about 2ms at 6 Mbit/s, so every time the ladder
+ * reaches the bottom, 2.4GHz pays roughly six times the penalty 5GHz does --
+ * and on this device 2.4GHz runs at about 19 Mbit/s against 48-80 on 5GHz,
+ * with TX retries at 96% against 35%.
+ *
+ * The fallback itself is not a local invention: the vendor's own NuttX build
+ * of this driver has the same low_rate_idx and low_rate_count in the same
+ * place.  What is untested is whether 1 Mbit/s is the right choice on a band
+ * this congested.  Useful values are hardware rate ids from bes2600_rates[]:
+ * 0 = 1M CCK, 3 = 11M CCK, 6 = 6M OFDM, 8 = 12M OFDM.
+ *
+ *   echo 3 > /sys/module/bes2600/parameters/tx_low_rate_idx
+ */
+static int tx_low_rate_idx = -1;
+module_param(tx_low_rate_idx, int, 0644);
+MODULE_PARM_DESC(tx_low_rate_idx,
+	"hw rate id for the HT fallback rate (-1 = 1M on 2.4GHz, 6M on 5GHz)");
+
 static int tx_policy_build(const struct bes2600_common *hw_priv,
 	/* [out] */ struct tx_policy *policy,
 	struct ieee80211_tx_rate *rates, size_t count)
@@ -320,6 +346,10 @@ static int tx_policy_build(const struct bes2600_common *hw_priv,
 		}
 		if (hw_priv->channel != NULL && hw_priv->channel->hw_value > 14)
 			low_rate_idx = 6;  /* set default 11a 6M */
+
+		/* Diagnostic override; see the note on tx_low_rate_idx. */
+		if (tx_low_rate_idx >= 0 && tx_low_rate_idx <= 13)
+			low_rate_idx = tx_low_rate_idx;
 
 		rateid = low_rate_idx;
 		off = rateid >> 3;      /* eq. rateid / 8 */
