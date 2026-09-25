@@ -16,6 +16,7 @@
 #include <linux/delay.h>
 #include <linux/mmc/host.h>
 #include <linux/mmc/sdio_func.h>
+#include <linux/mmc/core.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/sdio.h>
 #include <linux/spinlock.h>
@@ -1996,6 +1997,56 @@ static void bes2600_sdio_en_lp_cb(struct bes2600_common *hw_priv)
 }
 
 /* Probe Function to be called by SDIO stack when device is discovered */
+/*
+ * Re-downloading firmware to a chip that is already running it does not work:
+ * the transfers come back -EBUSY, the download gives up, and the probe fails.
+ * That is what a plain "modprobe -r bes2600 && modprobe bes2600" does, and why
+ * recovering has meant rebooting the board.
+ *
+ * The chip needs its power cycled, and nothing in this driver can do that.
+ * powerup-gpios is not in the device tree, so pdata->powerup is NULL and
+ * bes2600_sdio_power_switch() is a no-op -- gpiod_direction_output() accepts a
+ * NULL descriptor and does nothing.  The lines that would do it belong to the
+ * MMC core: vcc_wl is this card's vmmc-supply and the reset line is held by
+ * the mmc-pwrseq attached to the host.
+ *
+ * So ask the MMC core, which owns both.  mmc_hw_reset() on an SDIO card with
+ * more than one function probed -- this part has two -- marks the card removed
+ * and schedules a rescan, which drops the power rail, runs the power sequence
+ * and re-detects the card.  We are probed again against a chip that has
+ * genuinely restarted.  The work is scheduled rather than run inline, so this
+ * is safe to call from probe; we still return the failure for this attempt.
+ *
+ * Guarded by a flag, because a chip that is broken rather than merely busy
+ * would otherwise reset, fail, and reset again without end.  One attempt per
+ * successful download.
+ */
+static bool bes2600_reset_attempted;
+
+static void bes2600_sdio_recover_busy_chip(struct sdio_func *func)
+{
+	int ret;
+
+	if (bes2600_reset_attempted) {
+		bes_err("firmware download still failing after a reset, "
+			"giving up -- the board needs a power cycle\n");
+		return;
+	}
+
+	if (!func->card) {
+		bes_err("no mmc_card to reset\n");
+		return;
+	}
+
+	bes2600_reset_attempted = true;
+	bes_info("firmware download failed with -EBUSY; power-cycling the chip "
+		 "through the MMC core and retrying\n");
+
+	ret = mmc_hw_reset(func->card);
+	if (ret < 0)
+		bes_err("mmc_hw_reset failed: %d\n", ret);
+}
+
 static int bes2600_sdio_probe(struct sdio_func *func,
 			      const struct sdio_device_id *id)
 {
@@ -2073,8 +2124,13 @@ static int bes2600_sdio_probe(struct sdio_func *func,
 		bes_devel("interrupt init process beacuse device be closed.\n");
 		goto out;
 	} else if(status < 0) {	// for download fail case
+		if (status == -EBUSY)
+			bes2600_sdio_recover_busy_chip(func);
 		goto err;
 	}
+
+	/* A download got through, so the next failure is worth a reset again. */
+	bes2600_reset_attempted = false;
 
 	status = bes2600_register_net_dev(self);
 	if (status) {

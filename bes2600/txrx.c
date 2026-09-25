@@ -223,6 +223,30 @@ static void bes2600_check_prov_desc_req(struct bes2600_common *hw_priv,
  * IEEE80211_TX_STAT_AMPDU, so an aggregate's failures are plausibly charged
  * once per subframe.  That would also explain values above 100%.
  *
+ * Both halves of that have since been answered, and neither the way this
+ * paragraph expected.
+ *
+ * The percentage is a property of what is being counted, not of the link.
+ * Measured on one link in one session: transmitting acks for an incoming
+ * download, 86-byte frames, 56.9% retries; transmitting real data, 1473-byte
+ * frames, 4.6%.  A 1x1 station retrying 4.6% of its data frames is ordinary.
+ * Any comparison of retry percentages has to state the traffic direction.
+ *
+ * And the suppression above is not a local mistake to be corrected -- it is
+ * what this whole family does, because aggregation happens in firmware:
+ *
+ *   cw1200 (mainline)      txrx.c:924, same line, commented out
+ *   XRadio xr819           same line commented out in every fork examined,
+ *                          and AMPDU_AGGREGATION disabled outright
+ *   wfx (mainline, SiLabs) never sets it; sets TX_AMPDU_SETUP_IN_HW and
+ *                          returns -EOPNOTSUPP from ampdu_action with
+ *                          "Leave the firmware doing its business"
+ *
+ * This driver sets TX_AMPDU_SETUP_IN_HW and AMPDU_AGGREGATION and refuses
+ * ampdu_action the same way wfx does, so mac80211 never drives the BlockAck
+ * session and has no aggregate to be told about.  Reporting the flag would be
+ * describing something mac80211 is not doing.  Leave it alone.
+ *
  * There is a second implementation worth comparing against, already in the
  * kernel LuneOS builds.  megi's tree carries BES2600 support merged into the
  * mainline cw1200 driver -- drivers/net/wireless/st/cw1200, with bes2600.c

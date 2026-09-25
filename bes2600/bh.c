@@ -10,6 +10,7 @@
  */
 #include <net/mac80211.h>
 #include <linux/kthread.h>
+#include <linux/moduleparam.h>
 #include <uapi/linux/ip.h>
 #include <uapi/linux/tcp.h>
 #include <uapi/linux/udp.h>
@@ -1302,6 +1303,35 @@ int bes2600_bh_sw_process(struct bes2600_common *hw_priv,
 }
 #endif
 
+/*
+ * How long a transmission may sit unconfirmed before the link to the chip is
+ * declared dead.  Hitting this does not report an error and carry on -- it
+ * calls bes2600_chrdev_wifi_force_close(), which halts the device and takes
+ * the interface down -- so the threshold has to sit above every delay that is
+ * merely slow, or a working radio gets torn down for being late.
+ *
+ * It was three seconds, and that is under the worst case measured on this
+ * hardware.  With power save enabled, round trips on an idle link have been
+ * seen out to 4.7s (0% loss; the traffic arrives, late), because the chip is
+ * asleep and the host waits for the next beacon interval to reach it.  A
+ * confirmation owed across one of those stalls could pass three seconds
+ * without anything being wrong, and the recovery path would then fire on a
+ * link that was about to answer.
+ *
+ * Ten seconds clears the measured worst case with room to spare while still
+ * catching a genuinely wedged chip in a usable time.  Settable at runtime so
+ * it can be moved without a rebuild if a longer stall ever turns up.
+ */
+static uint mon_timeout_ms = 10000;
+module_param(mon_timeout_ms, uint, 0644);
+MODULE_PARM_DESC(mon_timeout_ms,
+	"ms a tx may go unconfirmed before the chip is declared dead (default 10000)");
+
+static inline unsigned long bes2600_mon_expires(void)
+{
+	return jiffies + msecs_to_jiffies(mon_timeout_ms);
+}
+
 void bes2600_bh_inc_pending_count(struct bes2600_common *hw_priv, int idx)
 {
 	struct timer_list *timer = (idx == 0) ? &hw_priv->lmac_mon_timer
@@ -1309,7 +1339,7 @@ void bes2600_bh_inc_pending_count(struct bes2600_common *hw_priv, int idx)
 
 	if (hw_priv->wsm_tx_pending[idx]++ == 0) {
 		bes_devel("start timer in tx, idx:%d\n", idx);
-		mod_timer(timer, jiffies + 3 * HZ);
+		mod_timer(timer, bes2600_mon_expires());
 	}
 }
 
@@ -1326,15 +1356,15 @@ void bes2600_bh_dec_pending_count(struct bes2600_common *hw_priv, int idx)
 	if (--hw_priv->wsm_tx_pending[idx] == 0)
 		timer_delete_sync(timer);
 	else
-		mod_timer(timer, jiffies + 3 * HZ);
+		mod_timer(timer, bes2600_mon_expires());
 }
 
 void bes2600_bh_mcu_active_monitor(struct timer_list* t)
 {
 	struct bes2600_common *hw_priv = timer_container_of(hw_priv, t, mcu_mon_timer);
 
-	bes_err("link break between mcu and host, hw_buf_used:%d pending:%d\n", 
-				hw_priv->hw_bufs_used, hw_priv->wsm_tx_pending[1]);
+	bes_err("link break between mcu and host after %ums, hw_buf_used:%d pending:%d\n",
+				mon_timeout_ms, hw_priv->hw_bufs_used, hw_priv->wsm_tx_pending[1]);
 	bes2600_chrdev_wifi_force_close(hw_priv, true);
 }
 
@@ -1342,8 +1372,8 @@ void bes2600_bh_lmac_active_monitor(struct timer_list* t)
 {
 	struct bes2600_common *hw_priv = timer_container_of(hw_priv, t, lmac_mon_timer);
 
-	bes_err("link break between lmac and host, hw_buf_used:%d pending:%d\n", 
-				hw_priv->hw_bufs_used, hw_priv->wsm_tx_pending[0]);
+	bes_err("link break between lmac and host after %ums, hw_buf_used:%d pending:%d\n",
+				mon_timeout_ms, hw_priv->hw_bufs_used, hw_priv->wsm_tx_pending[0]);
 	bes2600_chrdev_wifi_force_close(hw_priv, true);
 }
 
