@@ -1130,9 +1130,26 @@ int bes2600_load_firmware_sdio(struct sbus_ops *ops, struct sbus_priv *priv)
 	 * It is not a startup race either -- re-attaching by hand well after
 	 * "execute main" has appeared fails exactly the same way.
 	 *
-	 * So the open question is why the UART carries nothing, not which
-	 * image was downloaded.  What differs from the tree that worked is
-	 * this driver drop and the kernel, not the firmware or fw_type.
+	 * The UART is why, and it is not this driver's doing.  HCI runs over
+	 * ttyS1 (serial@fe650000) with hardware flow control -- hciattach is
+	 * invoked with "flow".  The device tree that worked wires all of it:
+	 *
+	 *	&uart1 {
+	 *		pinctrl-0 = <&uart1m0_xfer
+	 *			     &uart1m0_ctsn
+	 *			     &uart1m0_rtsn>;
+	 *		uart-has-rtscts;
+	 *	};
+	 *
+	 * The 6.6 tree carries exactly that.  On the 7.2 kernel the node has
+	 * pinctrl-0 = <&uart1m0_xfer> alone, no uart-has-rtscts, and the
+	 * uart1m0_ctsn and uart1m0_rtsn groups are not in the DTB at all.
+	 * TX and RX are muxed; CTS and RTS are not connected to anything.
+	 *
+	 * With the BT side's CTS never asserted it will not transmit, which
+	 * is what the counters say: TX climbs, RX stays at 0, in both "flow"
+	 * and "noflow" -- noflow only relaxes the host's termios, it cannot
+	 * mux a pin.  Fix belongs in the 7.2 device tree, not here.
 	 *
 	 * Switching fw_type to BES2600_FW_TYPE_BT at runtime does not rescue
 	 * it either.  bes2600_op_change_fw_type() has to take the chip down
