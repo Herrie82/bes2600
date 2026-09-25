@@ -17,6 +17,7 @@
 #include <linux/random.h>
 #include <linux/sched.h>
 #include <linux/of.h>
+#include <linux/crc32.h>
 #include <net/mac80211.h>
 
 #include "bes2600.h"
@@ -386,6 +387,70 @@ static void bes2600_init_wapi_cipher(struct ieee80211_hw *hw)
 }
 #endif
 
+/*
+ * This part has no MAC address of its own.  There is none in the factory
+ * calibration blob -- that carries only IQ, frequency and power trim -- and
+ * none in any efuse the driver can reach, so one has to be invented.
+ *
+ * The three ways of doing that are not equally good:
+ *
+ *   get_random_bytes()      unique, but different on every boot, so the AP
+ *                           sees a new station each time and any DHCP
+ *                           reservation or MAC filter is useless.
+ *   a constant in the DTS   stable, but identical on every device running
+ *                           this image, which collides the moment two of
+ *                           them join one network.
+ *   derived from the SoC    stable and unique, which is what is wanted.
+ *
+ * The board's serial-number property is a per-device value the bootloader
+ * takes from the SoC, so hashing it gives an address that is the same across
+ * reboots and reflashes and different between boards.  The result is marked
+ * locally administered, because it is: no OUI has been assigned for it.
+ *
+ * local-mac-address still wins if something supplies a real one -- but not if
+ * it is the de:ad:be:ef:12:34 placeholder the PineTab2 DTS carries, which is
+ * not an address at all and is the same on every board that boots that DTB.
+ */
+static bool bes2600_mac_is_placeholder(const u8 *mac)
+{
+	static const u8 deadbeef[ETH_ALEN] __aligned(2) = {
+		0xde, 0xad, 0xbe, 0xef, 0x12, 0x34
+	};
+
+	return ether_addr_equal(mac, deadbeef);
+}
+
+static bool bes2600_mac_from_soc_serial(u8 *mac)
+{
+	struct device_node *root;
+	const char *serial = NULL;
+	u32 lo, hi;
+
+	root = of_find_node_by_path("/");
+	if (!root)
+		return false;
+	of_property_read_string(root, "serial-number", &serial);
+	of_node_put(root);
+
+	if (!serial || !*serial)
+		return false;
+
+	/* Two seeds so the six bytes do not repeat a four-byte pattern. */
+	lo = crc32_le(0, (const u8 *)serial, strlen(serial));
+	hi = crc32_le(~0U, (const u8 *)serial, strlen(serial));
+
+	mac[0] = (hi >> 8) & 0xff;
+	mac[1] = hi & 0xff;
+	mac[2] = (lo >> 24) & 0xff;
+	mac[3] = (lo >> 16) & 0xff;
+	mac[4] = (lo >> 8) & 0xff;
+	mac[5] = lo & 0xff;
+
+	mac[0] &= ~0x01;	/* unicast */
+	mac[0] |= 0x02;		/* locally administered */
+	return true;
+}
+
 static void bes2600_get_base_mac(struct bes2600_common *hw_priv)
 {
 	struct device_node *np;
@@ -396,18 +461,28 @@ static void bes2600_get_base_mac(struct bes2600_common *hw_priv)
 	np = of_find_compatible_node(NULL, NULL, "bestechnic,bes2600-sdio");
 	if (np) {
 		addr = of_get_property(np, "local-mac-address", &len);
-		if (addr && len == ETH_ALEN) {
+		if (addr && len == ETH_ALEN && !is_zero_ether_addr(addr) &&
+		    !bes2600_mac_is_placeholder(addr)) {
 			memcpy(hw_priv->addresses[0].addr, addr, ETH_ALEN);
 			ok = true;
-		} else {
-			bes_err("bestechnic,bes2600 device node does not have valid local-mac-address property, random mac will be used!\n");
+		} else if (addr && len == ETH_ALEN) {
+			bes_info("ignoring the %pM placeholder in local-mac-address\n",
+				 addr);
 		}
 		of_node_put(np);
-		} else {
-		bes_err("bestechnic,bes2600 device node NOT found, random mac will be used!\n");
 	}
-	if (!ok)
+
+	if (!ok && bes2600_mac_from_soc_serial(hw_priv->addresses[0].addr)) {
+		ok = true;
+		bes_info("no local-mac-address, derived %pM from the SoC serial\n",
+			 hw_priv->addresses[0].addr);
+	}
+
+	if (!ok) {
 		get_random_bytes(hw_priv->addresses[0].addr, ETH_ALEN);
+		bes_err("no local-mac-address and no SoC serial, using a random MAC "
+			"-- it will differ on every boot\n");
+	}
 
 	hw_priv->addresses[0].addr[0] &= ~1u;
 }
