@@ -2023,9 +2023,44 @@ static void bes2600_sdio_en_lp_cb(struct bes2600_common *hw_priv)
  */
 static bool bes2600_reset_attempted;
 
+/*
+ * Off by default, because on a PineTab2 it resets the board.
+ *
+ * The reasoning above is sound and the call does what it says -- it just
+ * cannot be used here.  Cutting this card's power means dropping vcc_wl, and
+ * on this hardware that takes the SoC with it: the board reboots, with
+ * nothing in pstore, so not an oops but a hard reset.  Two independent ways
+ * of reaching the same rail do it.  Unbinding fe2c0000.mmc from
+ * dwmmc_rockchip reboots the board, and so does this, which is the same power
+ * cycle asked for through a different door.
+ *
+ * What that leaves is a choice between two bad outcomes on a failed
+ * re-download: WiFi stays down until the next reboot, or the board reboots
+ * immediately.  The first is what this driver did before and is the less
+ * disruptive of the two, so it stays the default.
+ *
+ * Kept, and settable, because the analysis holds for any board that can drop
+ * this rail without resetting -- and because the day someone wires
+ * powerup-gpios into the device tree, that becomes the right way to do this
+ * and this code documents why it was needed.
+ */
+static bool ebusy_reset;
+module_param(ebusy_reset, bool, 0644);
+MODULE_PARM_DESC(ebusy_reset,
+	"power-cycle the chip via the MMC core when a firmware re-download "
+	"returns -EBUSY (default off: on PineTab2 this resets the board)");
+
 static void bes2600_sdio_recover_busy_chip(struct sdio_func *func)
 {
 	int ret;
+
+	if (!ebusy_reset) {
+		bes_err("firmware download failed with -EBUSY: the chip is still "
+			"running the previous firmware and cannot be power-cycled "
+			"from here, so wifi stays down until the next reboot "
+			"(ebusy_reset=1 would try, and resets this board)\n");
+		return;
+	}
 
 	if (bes2600_reset_attempted) {
 		bes_err("firmware download still failing after a reset, "
