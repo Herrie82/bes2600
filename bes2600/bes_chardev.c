@@ -1436,11 +1436,28 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	 * pointer fix, the TX confirm queue leak, the SDIO function check --
 	 * were all already present in the builds that measured low.
 	 *
-	 * So no change in this driver accounts for it, which leaves the
-	 * kernel it was built against, the firmware, or the environment.  The
-	 * decisive test is to rebuild the module at the old revision and
-	 * measure again: if it still gives ~31 Mbit/s the step was never ours,
-	 * and if it gives ~19 the bisection is worth doing properly.  Opcode 0x1003 times out with -110 exactly as before
+	 * So no change in this driver accounts for it, which leaves the kernel
+	 * it was built against, the firmware, or the environment.
+	 *
+	 * The module was then rebuilt at 672dd85, the last revision before
+	 * either of those two changes, and measured with nothing else altered.
+	 * Twelve transfers on 2.4GHz at -35 dBm: mean 25.2, median 23.5, range
+	 * 10-36.  That is neither figure.  It sits between the two groups and
+	 * overlaps both, so it does not reproduce the low reading and does not
+	 * match the high one either.
+	 *
+	 * The same build, in the same session, produced 87.5 Mbit/s on 5GHz --
+	 * the highest number measured anywhere in this work, against 48 to 71
+	 * on the builds that were supposedly better.  A regression in this
+	 * driver does not lift one band to a record while holding the other
+	 * down; a busy 2.4GHz channel does exactly that.
+	 *
+	 * The honest conclusion is that 2.4GHz here varies by roughly a factor
+	 * of two from day to day and the "step" was that variation sampled
+	 * twice, not a change in this code.  Across the whole investigation
+	 * 2.4GHz has ranged 10-50 Mbit/s with no setting reproducibly moving
+	 * it, while 5GHz has ranged 48-97.  The AX210 on the same AP and
+	 * channel managed 34.2, which is inside this part's range.  Opcode 0x1003 times out with -110 exactly as before
 	 * and the adapter keeps an all-zero address.  Setting it is still the
 	 * right default -- it matches the tree that worked and it costs
 	 * nothing -- but it is not the fix, and the remaining suspect is the
