@@ -1362,8 +1362,28 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	 * side of the comparison rather than an A/B, but the three post-change
 	 * runs are tight and the pre-change one is nowhere near them.
 	 *
-	 * Still not an A/B: confirming it needs this set back to n and
-	 * interleaved against y.  Opcode 0x1003 times out with -110 exactly as before
+	 * A runtime A/B of the subsystem STATE comes back null.  Toggling it
+	 * with BT_OFF/BT_ON through /dev/bes2600, interleaved, four rounds on
+	 * 2.4GHz at -41 dBm (the driver acknowledged every switch):
+	 *
+	 *   BT subsystem OFF   mean 32.8 Mbit/s, retries 57%
+	 *   BT subsystem ON    mean 29.2,        retries 54%
+	 *
+	 * ON ahead in 1 of 4 paired rounds, and both arms sit inside the same
+	 * 22-44 Mbit/s band every other post-change run has produced -- nowhere
+	 * near the 18.8 from before the flag was set.
+	 *
+	 * So whatever this changed, it is not "the BT subsystem is active while
+	 * WiFi runs", because that can be switched off at runtime with no
+	 * effect.  What the flag also changes is WHEN the subsystem is enabled:
+	 * inside the probe sequence, before the firmware finishes coming up,
+	 * rather than whenever hciattach.sh writes BT_ON afterwards.  That
+	 * ordering is not reachable at runtime, and it is the remaining
+	 * candidate.
+	 *
+	 * Confirming it therefore still needs this set back to n and
+	 * interleaved against y across boots -- the runtime shortcut does not
+	 * substitute.  Opcode 0x1003 times out with -110 exactly as before
 	 * and the adapter keeps an all-zero address.  Setting it is still the
 	 * right default -- it matches the tree that worked and it costs
 	 * nothing -- but it is not the fix, and the remaining suspect is the
