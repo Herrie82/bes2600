@@ -91,6 +91,26 @@ struct bes2600_op_map {
 
 static struct bes_cdev bes2600_cdev;
 module_param_named(fw_type, bes2600_cdev.fw_type, int, 0644);
+
+/*
+ * bt_boot_on - override CONFIG_BES2600_BT_BOOT_ON at load time.
+ *
+ * -1 keeps whatever the build chose; 0 and 1 force it off or on.  Only read
+ * in bes2600_chrdev_init(), so it has to be given to modprobe -- writing it
+ * afterwards does nothing, which is the point: what this flag controls is
+ * when the chip's BT subsystem is enabled relative to the firmware coming up,
+ * and that decision is made once, during probe.
+ *
+ * It exists so the two settings can be compared by reloading the module
+ * rather than reflashing between them.  Toggling the subsystem's state at
+ * runtime through /dev/bes2600 was already tried and changes nothing, so
+ * ordering is the only remaining explanation for the throughput difference
+ * recorded below, and ordering cannot be tested any other way.
+ */
+static int bt_boot_on = -1;
+module_param(bt_boot_on, int, 0444);
+MODULE_PARM_DESC(bt_boot_on,
+	"enable the BT subsystem during probe: -1 build default, 0 off, 1 on");
 #ifdef BES2600_WRITE_DPD_TO_FILE
 module_param_named(no_dpd, bes2600_cdev.no_dpd, int, 0644);
 #endif
@@ -1403,6 +1423,13 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	bes2600_cdev.bt_opened = false;
 	bes2600_cdev.bton_pending = false;
 #endif
+	/* Load-time override, for A/B'ing the two without a rebuild. */
+	if (bt_boot_on >= 0) {
+		bes2600_cdev.bt_opened = !!bt_boot_on;
+		bes2600_cdev.bton_pending = !!bt_boot_on;
+	}
+	bes_info("bt_boot_on: %s\n",
+		 bes2600_cdev.bton_pending ? "enabled during probe" : "deferred");
 	bes2600_cdev.dpd_calied = false;
 	bes2600_cdev.wait_state = BES2600_BOOT_WAIT_NONE;
 	bes2600_cdev.sbus_ops = ops;
