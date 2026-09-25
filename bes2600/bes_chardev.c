@@ -1349,9 +1349,21 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	 * manages 34.2 Mbit/s -- so 2.4GHz here is now within 8% of a 2x2
 	 * client from a 1x1 one.
 	 *
-	 * Still not an A/B: every one of these runs is on the same build, and
-	 * the comparison points come from earlier builds on earlier days.
-	 * Confirming it needs this set back to n and interleaved against y.  Opcode 0x1003 times out with -110 exactly as before
+	 * Three separate runs on this build now agree on 2.4GHz, against one
+	 * run on the build before it:
+	 *
+	 *   BT_BOOT_ON=n   18.8 Mbit/s   93% retries
+	 *   BT_BOOT_ON=y   30.0          47%
+	 *   BT_BOOT_ON=y   31.5          50%
+	 *   BT_BOOT_ON=y   32.5          52%
+	 *
+	 * all with power save off, all band-verified, -38 to -40 dBm.  The
+	 * "before" side is still a single run, so this is repeatability on one
+	 * side of the comparison rather than an A/B, but the three post-change
+	 * runs are tight and the pre-change one is nowhere near them.
+	 *
+	 * Still not an A/B: confirming it needs this set back to n and
+	 * interleaved against y.  Opcode 0x1003 times out with -110 exactly as before
 	 * and the adapter keeps an all-zero address.  Setting it is still the
 	 * right default -- it matches the tree that worked and it costs
 	 * nothing -- but it is not the fix, and the remaining suspect is the
