@@ -404,7 +404,11 @@ static void bes2600_init_wapi_cipher(struct ieee80211_hw *hw)
  *
  * The board's serial-number property is a per-device value the bootloader
  * takes from the SoC, so hashing it gives an address that is the same across
- * reboots and reflashes and different between boards.  The result is marked
+ * reboots and reflashes and different between boards.  Measured on the tablet
+ * this was developed against: serial d2e663f8820a92e9 yields 2a:84:01:80:9e:2e,
+ * reproduced across reflashes.  (Note for anyone modelling this outside the
+ * kernel: crc32_le() does not pre- or post-invert, so zlib.crc32() and friends
+ * will not give the same answer.)  The result is marked
  * locally administered, because it is: no OUI has been assigned for it.
  *
  * local-mac-address still wins if something supplies a real one -- but not if
