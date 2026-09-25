@@ -1421,11 +1421,26 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	 * it.  Retained anyway: it matches the tree where Bluetooth worked,
 	 * costs nothing, and the parameter is useful for ruling questions out.
 	 *
-	 * What is left unexplained is the single 18.8 Mbit/s figure, measured
-	 * once.  Every run since -- across builds, flags, coex settings,
-	 * fallback rates and reboots -- has landed between 21 and 50 Mbit/s.
-	 * The most economical reading is now that the 18.8 was the outlier,
-	 * not the baseline.  Opcode 0x1003 times out with -110 exactly as before
+	 * What is left unexplained is the step itself, and it is not a single
+	 * stray reading: the low group is 19 transfers across three runs
+	 * (means 18.4, 19.4, 18.8; nothing above 28) and the high group is 26
+	 * transfers across six runs (means 30.0 to 36.3; nothing below 21).
+	 *
+	 * Auditing every commit between the last build that measured low and
+	 * the first that measured high leaves almost nothing to blame.  The
+	 * only functional changes in that window are this flag, now shown to
+	 * do nothing, and tx_low_rate_idx, which defaults to -1 and was also
+	 * measured to do nothing when set.  Everything else in the window is
+	 * comments or a host-side script.  The throughput-relevant fixes
+	 * earlier in the branch -- the MMC capability fix, the slave-ready
+	 * pointer fix, the TX confirm queue leak, the SDIO function check --
+	 * were all already present in the builds that measured low.
+	 *
+	 * So no change in this driver accounts for it, which leaves the
+	 * kernel it was built against, the firmware, or the environment.  The
+	 * decisive test is to rebuild the module at the old revision and
+	 * measure again: if it still gives ~31 Mbit/s the step was never ours,
+	 * and if it gives ~19 the bisection is worth doing properly.  Opcode 0x1003 times out with -110 exactly as before
 	 * and the adapter keeps an all-zero address.  Setting it is still the
 	 * right default -- it matches the tree that worked and it costs
 	 * nothing -- but it is not the fix, and the remaining suspect is the
