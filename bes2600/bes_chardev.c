@@ -1401,9 +1401,31 @@ int bes2600_chrdev_init(struct sbus_ops *ops)
 	 * ordering is not reachable at runtime, and it is the remaining
 	 * candidate.
 	 *
-	 * Confirming it therefore still needs this set back to n and
-	 * interleaved against y across boots -- the runtime shortcut does not
-	 * substitute.  Opcode 0x1003 times out with -110 exactly as before
+	 * Done properly, across reboots, with bt_boot_on set through
+	 * /etc/modprobe.d so each arm gets a real power-on (a module reload
+	 * cannot be used: the chip refuses a second firmware download with
+	 * -EBUSY from bes_slave_rx_ready and the probe fails outright).  Three
+	 * alternating rounds on 2.4GHz, band verified, power save off:
+	 *
+	 *   bt_boot_on=0 (deferred)   37, 46, 26 -> mean 36.3, retries 59%
+	 *   bt_boot_on=1 (at probe)   23, 25, 41 -> mean 29.7, retries 59%
+	 *
+	 * The flag does nothing.  "On" was ahead in one round of three, the
+	 * deferred arm is nominally faster, and both sit inside the same
+	 * 23-46 Mbit/s spread -- neither anywhere near the 18.8 Mbit/s that
+	 * the build before this flag produced.
+	 *
+	 * So the 18.8 was not caused by BT_BOOT_ON, and the ~31 Mbit/s seen
+	 * since is not caused by it either.  Something else differs between
+	 * that early measurement and everything after it, and this flag is not
+	 * it.  Retained anyway: it matches the tree where Bluetooth worked,
+	 * costs nothing, and the parameter is useful for ruling questions out.
+	 *
+	 * What is left unexplained is the single 18.8 Mbit/s figure, measured
+	 * once.  Every run since -- across builds, flags, coex settings,
+	 * fallback rates and reboots -- has landed between 21 and 50 Mbit/s.
+	 * The most economical reading is now that the 18.8 was the outlier,
+	 * not the baseline.  Opcode 0x1003 times out with -110 exactly as before
 	 * and the adapter keeps an all-zero address.  Setting it is still the
 	 * right default -- it matches the tree that worked and it costs
 	 * nothing -- but it is not the fix, and the remaining suspect is the
