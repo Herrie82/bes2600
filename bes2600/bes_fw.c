@@ -1109,18 +1109,30 @@ int bes2600_load_firmware_sdio(struct sbus_ops *ops, struct sbus_priv *priv)
 #endif
 
 	/*
-	 * WiFi and Bluetooth firmware are mutually exclusive here, and that is
-	 * why Bluetooth does not work on the PineTab2.
+	 * WiFi and Bluetooth firmware are selected exclusively here: fw_type
+	 * defaults to BES2600_FW_TYPE_WIFI_SIGNAL, so the only image ever
+	 * downloaded is best2002_fw_sdio.bin, and best2002_fw_sdio_btrf.bin
+	 * ships alongside it and is never loaded.
 	 *
-	 * fw_type defaults to BES2600_FW_TYPE_WIFI_SIGNAL, so the only image
-	 * ever downloaded is best2002_fw_sdio.bin.  best2002_fw_sdio_btrf.bin
-	 * ships alongside it and is never loaded.  The BT controller therefore
-	 * has nothing running on it: hciattach owns ttyS1 and creates hci0,
-	 * but the far end never answers, so every command times out --
-	 * "Opcode 0x1003 failed: -110" -- and the adapter keeps an all-zero
-	 * address.  /dev/bes2600 BT_ON does reach the driver, which logs
-	 * "enable BT" and sends BES_SUBSYSTEM_BT_ACTIVE, but a subsystem
-	 * enable cannot substitute for firmware that was never downloaded.
+	 * This used to be recorded here as the reason Bluetooth does not work
+	 * on the PineTab2.  That was wrong, and two things disprove it.
+	 *
+	 * The LuneOS 6.6 tree where Bluetooth did work has this same exclusive
+	 * selection, and pins the identical firmware revision -- so a build
+	 * that worked did so with only the WiFi image downloaded.  And the BT
+	 * core is demonstrably alive on the failing build: its firmware prints
+	 * "[bt_time] execute main" to the log a fraction of a second after
+	 * BES_SUBSYSTEM_BT_ACTIVE goes out.  Something is running over there.
+	 *
+	 * What fails is the HCI link, not the download.  hciattach owns ttyS1
+	 * and creates hci0, sends HCI Reset, and nothing ever comes back:
+	 * "Opcode 0x1003 failed: -110", RX bytes 0, and an all-zero address.
+	 * It is not a startup race either -- re-attaching by hand well after
+	 * "execute main" has appeared fails exactly the same way.
+	 *
+	 * So the open question is why the UART carries nothing, not which
+	 * image was downloaded.  What differs from the tree that worked is
+	 * this driver drop and the kernel, not the firmware or fw_type.
 	 *
 	 * Switching fw_type to BES2600_FW_TYPE_BT at runtime does not rescue
 	 * it either.  bes2600_op_change_fw_type() has to take the chip down
@@ -1132,9 +1144,8 @@ int bes2600_load_firmware_sdio(struct sbus_ops *ops, struct sbus_priv *priv)
 	 * a device you cannot physically reach.
 	 *
 	 * It would not be a fix even if it worked, since that mode turns WiFi
-	 * off.  A combo part wants one image serving both, which is what the
-	 * vendor's own NuttX build does.  Whether best2002_fw_sdio.bin
-	 * contains a BT stack at all has not been established.
+	 * off -- and on the evidence above it is not needed: the BT core comes
+	 * up from the WiFi image.
 	 */
 	bes_devel("%s fw_type:%d.\n", __func__, fw_type);
 	if(fw_type == BES2600_FW_TYPE_BT) {
