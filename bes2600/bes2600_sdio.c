@@ -2050,25 +2050,42 @@ static void bes2600_sdio_en_lp_cb(struct bes2600_common *hw_priv)
 static bool bes2600_reset_attempted;
 
 /*
- * Off by default, because on a PineTab2 it resets the board.
+ * Off by default, but not for the reason first recorded here.
  *
- * The reasoning above is sound and the call does what it says -- it just
- * cannot be used here.  Cutting this card's power means dropping vcc_wl, and
- * on this hardware that takes the SoC with it: the board reboots, with
- * nothing in pstore, so not an oops but a hard reset.  Two independent ways
- * of reaching the same rail do it.  Unbinding fe2c0000.mmc from
- * dwmmc_rockchip reboots the board, and so does this, which is the same power
- * cycle asked for through a different door.
+ * This used to say that dropping the rail resets the board.  It does not.
+ * Measured on 7.2.0-pinetab2-ge8fb7c7: with this module unloaded first,
+ * unbinding fe2c0000.mmc from dwmmc_rockchip -- which is mmc_power_off(),
+ * the regulator and the power sequence, the same thing mmc_hw_reset() asks
+ * for -- the board carries on, uptime unbroken, and the card goes away:
  *
- * What that leaves is a choice between two bad outcomes on a failed
- * re-download: WiFi stays down until the next reboot, or the board reboots
- * immediately.  The first is what this driver did before and is the less
- * disruptive of the two, so it stays the default.
+ *   mmc2: card 0001 removed
  *
- * Kept, and settable, because the analysis holds for any board that can drop
- * this rail without resetting -- and because the day someone wires
- * powerup-gpios into the device tree, that becomes the right way to do this
- * and this code documents why it was needed.
+ * Binding it back brings it up again, and modprobe then downloads firmware
+ * with no -EBUSY at all, registering phy1 and a working wlan0.  So a real
+ * power cycle does cure the re-download, exactly as this was meant to, and
+ * the hardware has no objection to it.
+ *
+ * What actually reboots the board is unloading this module after a probe
+ * that failed.  Every reset seen while chasing this had that shape: a failed
+ * probe, then modprobe -r.  Unloading from a healthy state is fine.  So the
+ * fault is in this driver's teardown of a half-initialised device, and
+ * turning ebusy_reset on simply reaches it sooner -- the reset works, the
+ * probe that follows fails, and the unload after that takes the board down.
+ *
+ * It stays off until that teardown is fixed, because arming it makes a
+ * crash more likely, not less.  The recovery that does work today needs no
+ * driver support at all:
+ *
+ *   modprobe -r bes2600
+ *   echo fe2c0000.mmc > /sys/bus/platform/drivers/dwmmc_rockchip/unbind
+ *   echo fe2c0000.mmc > /sys/bus/platform/drivers/dwmmc_rockchip/bind
+ *   modprobe bes2600
+ *
+ * Diagnosing the teardown needs the oops, and pstore will not provide it:
+ * ramoops is registered with a console backend, but nothing survives a
+ * reboot -- /sys/fs/pstore is empty every time, so the region is being
+ * cleared before Linux reads it.  netconsole over the USB gadget is the way
+ * to catch it.
  */
 static bool ebusy_reset;
 module_param(ebusy_reset, bool, 0644);
