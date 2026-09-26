@@ -1456,6 +1456,45 @@ static int bes2600_platform_data_init(struct device *dev)
 		return -ENXIO;
 	}
 
+	/*
+	 * None of reset-gpios or powerup-gpios is in the PineTab2 device tree,
+	 * so both of these come back -ENOENT and every power operation in this
+	 * driver is a no-op.  That is worth fixing, and the device tree is
+	 * where it has to be fixed -- but not by copying what is there today,
+	 * because the board file does not agree with the schematic.
+	 *
+	 * PineTab2_V2_schematic-20230417.pdf, RK3566 pinout against the
+	 * BES2600 module:
+	 *
+	 *   GPIO0_A0  WIFI_PWREN_H  VBAT MOS switch enable
+	 *   GPIO3_D1  WIFI_RESET    module RESET pin
+	 *   GPIO3_D2  WIFI_PWRKEY   module PWRON pin
+	 *   GPIO3_D3  --            no wifi net on this pin
+	 *
+	 * The device tree has PWREN right and the other two wrong.  What it
+	 * drives as reset-gpios is RK_PD2, which is the power key; what it
+	 * calls pwrkey-gpios is RK_PD3, which is not connected to this chip at
+	 * all.  RK_PD1, the line that actually resets the part, appears
+	 * nowhere -- not in a pwrseq, not in a pinctrl group, not anywhere in
+	 * the board file.  The same three assignments are in megi's
+	 * mmc-pwrseq-bes node and in the DanctNIX arrangement that replaced
+	 * it, so this has been inherited rather than introduced.
+	 *
+	 * That is the likeliest reason the part is said to have no clean way
+	 * down.  Its reset has never been asserted by anything; the software
+	 * has been pulsing PWRON and calling it a reset, and toggling an
+	 * unconnected pin and calling it the power key.
+	 *
+	 * Worth noting against the other theory in this file: the schematic
+	 * has WIFI_PWREN switching a MOS on the wifi VBAT rail only -- a
+	 * revision note records a transistor added against leakage and the
+	 * enable polarity changed to active-high -- and nothing says that rail
+	 * feeds the SoC.  So the board reset seen when mmc_hw_reset() dropped
+	 * it is more likely a hang in the removal path than a brownout, and
+	 * the conclusion drawn there deserves re-testing once a real reset
+	 * line exists.
+	 */
+
 	/* Ensure I/Os are pulled low */
 	pdata->reset = devm_fwnode_gpiod_get_index(dev, &np->fwnode, "reset", 0, GPIOD_OUT_LOW, "bes2600_wlan_reset");
 	if (IS_ERR(pdata->reset)) {
