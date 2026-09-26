@@ -1441,6 +1441,44 @@ struct bes2600_platform_data_sdio *bes2600_get_platform_data(void)
 	return &bes_sdio_plat_data;
 }
 
+/*
+ * Which device's devm pool the gpio_descs below belong to.  Both SDIO
+ * functions are probed, but only the first one to get here fills the
+ * platform data in, and only that one may invalidate it again.
+ */
+static struct device *bes_pdata_owner;
+
+/*
+ * The descriptors in the global platform data are taken with devm_ against an
+ * sdio function's device, so the driver core puts them the moment that
+ * device's probe returns an error -- but "inited" stayed set and the pointers
+ * stayed behind.  Every later probe then skipped the lookup and carried on
+ * with descriptors this driver no longer holds, and the gpio calls in the
+ * wake paths went on poking them.
+ *
+ * That is the state a reload lands in.  A probe that fails leaves the globals
+ * describing a device that is gone, and the unload after it is where the board
+ * dies -- no oops, nothing over netconsole, just silence, which is what using
+ * a descriptor nobody owns any more can look like.
+ *
+ * So give up the copies when the owning device does.
+ */
+static void bes2600_platform_data_deinit(struct device *dev)
+{
+	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
+
+	if (!pdata->inited || bes_pdata_owner != dev)
+		return;
+
+	pdata->reset = NULL;
+	pdata->powerup = NULL;
+	pdata->wakeup = NULL;
+	pdata->host_wakeup = NULL;
+	pdata->wlan_bt_hostwake_registered = false;
+	pdata->inited = false;
+	bes_pdata_owner = NULL;
+}
+
 static int bes2600_platform_data_init(struct device *dev)
 {
 	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
@@ -1509,6 +1547,7 @@ static int bes2600_platform_data_init(struct device *dev)
 
 	pdata->wlan_bt_hostwake_registered = false;
 	pdata->inited = true;
+	bes_pdata_owner = dev;
 	return 0;
 }
 
@@ -2223,6 +2262,7 @@ out:
 
 err:
 	bes_err("%s failed, func:%d\n", __func__, func->num);
+	bes2600_platform_data_deinit(&func->dev);
 	bes2600_host_restore_removable(func);
 	sdio_claim_host(func);
 	sdio_disable_func(func);
@@ -2301,6 +2341,7 @@ static void bes2600_sdio_remove(struct sdio_func *func)
 {
 	struct sbus_priv *self = sdio_get_drvdata(func);
 
+	bes2600_platform_data_deinit(&func->dev);
 	bes2600_host_restore_removable(func);
 	bes_devel("%s called:%p,%d\n", __func__, func, func->num);
 
