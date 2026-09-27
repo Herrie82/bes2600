@@ -1474,9 +1474,16 @@ static void bes2600_platform_data_deinit(struct device *dev)
 	pdata->powerup = NULL;
 	pdata->wakeup = NULL;
 	pdata->host_wakeup = NULL;
-	pdata->wlan_bt_hostwake_registered = false;
-	pdata->inited = false;
 	bes_pdata_owner = NULL;
+
+	/*
+	 * inited stays set.  It means "this structure has been filled in", and
+	 * bes2600_sdio_init() treats it as a probe having run at all -- clearing
+	 * it there made a failed probe abort the module load outright, so the
+	 * module would not even stay resident to be retried.  What has gone
+	 * stale is the descriptors, and bes_pdata_owner going NULL is what says
+	 * so.
+	 */
 }
 
 static int bes2600_platform_data_init(struct device *dev)
@@ -1484,8 +1491,12 @@ static int bes2600_platform_data_init(struct device *dev)
 	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
 	struct device_node *np;
 
-	// skip reinit if already inited
-	if (pdata->inited)
+	/*
+	 * Skip the work if it is done and still ours.  A NULL owner means the
+	 * device the descriptors were taken against has gone, so they have to
+	 * be looked up again even though the rest of the structure stands.
+	 */
+	if (pdata->inited && bes_pdata_owner)
 		return 0;
 
 	np = of_find_compatible_node(NULL, NULL, "bestechnic,bes2600-sdio");
