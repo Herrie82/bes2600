@@ -475,6 +475,7 @@ static int bes2600_pwr_enter_lp_mode(struct bes2600_common *hw_priv)
 	int timeouts = 0;
 	char ip_str[20];
 	unsigned long status = 0;
+	bool expect_ind;
 
 	/* set interface low power configuration */
 	bes2600_for_each_vif(hw_priv, priv, i) {
@@ -524,6 +525,30 @@ static int bes2600_pwr_enter_lp_mode(struct bes2600_common *hw_priv)
 				bes_devel("%s, psMode:%s, fastPsmIdlePeriod:%d apPsmChangePeriod:%d minAutoPsPollPeriod:%d\n",
 						__func__, bes2600_get_ps_mode_str(priv->powersave_mode.pmMode), priv->powersave_mode.fastPsmIdlePeriod,
 						priv->powersave_mode.apPsmChangePeriod, priv->powersave_mode.minAutoPsPollPeriod);
+				/*
+				 * Only wait for the indication if a command is
+				 * actually going out.  bes2600_set_pm() sends
+				 * nothing when the firmware is already in the
+				 * requested mode, and returns 0 either way, so
+				 * this used to wait the full 5 s for a 0x0809
+				 * that could never arrive.
+				 *
+				 * That was not a corner case, it was the normal
+				 * path: mac80211 puts the station into PS
+				 * during ordinary operation, so by the time a
+				 * suspend asks for PS the firmware is already
+				 * there and the comparison always matches.  The
+				 * 5 s burned here is the same length as the
+				 * wait in bes2600_wow_suspend(), which is
+				 * waiting for THIS function to finish before it
+				 * can see the device go idle -- so the suspend
+				 * timed out every time, logged "wait device
+				 * idle timeout" with an empty busy-event list,
+				 * and had cfg80211 tear the association down.
+				 */
+				expect_ind = bes2600_set_pm_will_send(priv,
+						&priv->powersave_mode);
+
 				atomic_set(&hw_priv->bes_power.pm_set_in_process, 1);
 				ret = bes2600_set_pm(priv, &priv->powersave_mode);
 				if (ret) {
@@ -533,12 +558,47 @@ static int bes2600_pwr_enter_lp_mode(struct bes2600_common *hw_priv)
 					continue;
 				}
 
-				/* wait power save mode changed indication */
-				status = wait_for_completion_timeout(&hw_priv->bes_power.pm_enter_cmpl, 5 * HZ);
+				if (!expect_ind) {
+					/* already in the requested mode */
+					atomic_set(&hw_priv->bes_power.pm_set_in_process, 0);
+					bes_devel("%s, ps mode unchanged, no indication due\n",
+						  __func__);
+					continue;
+				}
+
+				/*
+				 * Wait for the 0x0809 SetPmIndication -- but for
+				 * 1 s, not 5.
+				 *
+				 * This is called from bes2600_pwr_unlock_device(),
+				 * which is what bes2600_wow_suspend() is waiting
+				 * on when it waits HZ * 5 for the device to go
+				 * idle.  At 5 s here the two waits were the same
+				 * length, so a missing indication did not merely
+				 * delay the suspend, it guaranteed the suspend
+				 * lost: the device was still UNLOCKING when the
+				 * caller gave up, and cfg80211 tore the
+				 * association down.  cw1200, which has the same
+				 * handshake, waits 1 s and notes that wow_suspend
+				 * must return in ~2.5 s.
+				 *
+				 * BES2600 firmware appears not to send this
+				 * indication at all -- instrumenting
+				 * wsm_set_pm_indication() to log unconditionally
+				 * produced nothing across a whole session, with
+				 * the command confirmed on the wire.  So this
+				 * timing out is the normal case here, and it must
+				 * stay cheap.  The caller ignores the return of
+				 * this function and marks the device UNLOCKED
+				 * regardless; the only cost of the timeout is
+				 * that bes2600_pwr_device_enter_lp_mode() is
+				 * skipped.
+				 */
+				status = wait_for_completion_timeout(&hw_priv->bes_power.pm_enter_cmpl, HZ);
 				atomic_set(&hw_priv->bes_power.pm_set_in_process, 0);
 				reinit_completion(&hw_priv->bes_power.pm_enter_cmpl);
 				if (!status) {
-					bes_err("%s, wait pm ind timeout (5s)\n", __func__);
+					bes_devel("%s, wait pm ind timeout (1s)\n", __func__);
 					timeouts++;
 				}
 			} else {

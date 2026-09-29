@@ -1104,6 +1104,31 @@ int bes2600_get_tx_stats(struct ieee80211_hw *dev,
 }
 */
 
+/*
+ * Would bes2600_set_pm() actually put a command on the wire?
+ *
+ * bes2600_set_pm() returns 0 both when it sent the command and when it
+ * decided the firmware was already in the requested mode, and every caller
+ * reads a non-zero return as an error, so the two cannot be told apart from
+ * the return value alone.  That matters to anyone who then waits for the
+ * 0x0809 SetPmIndication, because when nothing was sent no indication is
+ * coming and the wait can only ever time out.
+ *
+ * Keep this next to bes2600_set_pm() -- it deliberately repeats that
+ * function's uapsd adjustment and comparison, and the two must not drift.
+ */
+bool bes2600_set_pm_will_send(struct bes2600_vif *priv,
+			      const struct wsm_set_pm *arg)
+{
+	struct wsm_set_pm pm = *arg;
+
+	if (priv->uapsd_info.uapsdFlags != 0)
+		pm.pmMode &= ~WSM_PSM_FAST_PS_FLAG;
+
+	return memcmp(&pm, &priv->firmware_ps_mode,
+		      sizeof(struct wsm_set_pm)) != 0;
+}
+
 int bes2600_set_pm(struct bes2600_vif *priv, const struct wsm_set_pm *arg)
 {
 	struct wsm_set_pm pm = *arg;
