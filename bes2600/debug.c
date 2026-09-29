@@ -12,6 +12,9 @@
 #include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
+#include <linux/string.h>
+#include <linux/kernel.h>
+#include <linux/hex.h>
 #include "bes2600.h"
 #include "debug.h"
 
@@ -475,74 +478,154 @@ static const struct file_operations dpd_log_dump = {
  * comment and no payload struct -- SetMagicDataFrameFilter (0x101C), needed
  * for WIPHY_WOWLAN_MAGIC_PKT, is one of them.  No driver in that lineage
  * implements them (mainline cw1200 and both the mainline and upstream Silicon
- * Labs wfx drivers all name the ID and stop there), and the firmware image is
- * packed, so there is nothing to read statically.
+ * Labs wfx drivers all name the ID and stop there), and nothing can be read
+ * out of the firmware image either: best2002_fw_sdio.bin is a patch image over
+ * a mask ROM that is in no shipped file, and the MIB dispatch is in that ROM.
+ * (It is not packed -- 7.06 bits/byte -- that just does not help.  The proof
+ * is negative: 0x101B, which this driver writes successfully on every boot,
+ * occurs zero times as a byte pair in all four images.)
  *
- * The firmware will answer though: a ReadMIB confirm carries the payload
- * length it considers correct for that ID, and its current contents.  An
- * unsupported ID fails the confirm instead.  That is enough to tell whether a
- * MIB exists at all, and to pin down its size before anyone writes to it.
+ * So ask the firmware.  Three commands:
  *
- *   echo 101c > /sys/kernel/debug/ieee80211/phy0/bes2600/mib_probe
- *   dmesg | tail
+ *   echo 101c        > mib_probe    ReadMIB
+ *   echo 'w 101c 8'  > mib_probe    write 8 zero bytes
+ *   echo 'wx 101c 01020304' > mib_probe    write those bytes
  *
- * Probe the two implemented neighbours (101a ethertype, 101b UDP port) first:
- * they are known-good controls for the method.
+ * What each one is good for, measured on a PineTab2 with controls:
+ *
+ *   ReadMIB      useless for this family.  0x101A and 0x101B are write-only:
+ *                reads fail even though the driver writes both successfully.
+ *
+ *   write, id    decisive.  The firmware keeps a MIB id table and fails the
+ *                confirm for anything not in it -- 0x1FFF and 0x7FFF are
+ *                rejected with -22 at every length, while 0x1017, 0x101A,
+ *                0x101B and 0x101C are all accepted.  wsm_write_mib() does no
+ *                id validation of its own, so that -22 is the firmware's own
+ *                status word.  0x101C exists.
+ *
+ *   write, len   useless.  Length is validated for no MIB in this family, not
+ *                even for the two whose correct length is known from BES's own
+ *                build (see fw-analysis/vendor-cw1260).  Sweeping the length
+ *                cannot pin a struct down.
+ *
+ * That leaves the shape of 0x101C's payload, and only a functional test can
+ * settle it.  Suspending and sending a magic packet costs minutes per trial,
+ * which is too slow to sweep.  The filters run while awake too, so the fast
+ * oracle is the link itself: with a correctly shaped struct, an action of
+ * FILTER_IN over a pattern that matches all traffic should break the link
+ * within seconds, and the same struct over a pattern that matches nothing
+ * should leave it alone.  A wrong shape makes both arms behave the same.  Run
+ * it over USB, where losing the association costs nothing.
+ *
+ * Zeros are the benign payload for the plain write: for the two documented
+ * siblings a zeroed header means nrFilters = 0, i.e. "no filters", which is
+ * what the driver already writes to disable them.
  */
 static ssize_t bes2600_mib_probe_write(struct file *file,
 	const char __user *user_buf, size_t count, loff_t *ppos)
 {
 	struct bes2600_common *hw_priv = file->private_data;
-	char buf[32];
 	unsigned int mib_id;
 	size_t got = 0;
+	char *buf, *p;
 	u8 *data;
-	char *p;
 	int ret;
 
-	if (count == 0 || count >= sizeof(buf))
+	/* Two hex digits per payload byte, plus the command and separators. */
+	if (count == 0 || count > 2 * BES2600_MIB_PROBE_LEN + 32)
 		return -EINVAL;
-	if (copy_from_user(buf, user_buf, count))
-		return -EFAULT;
-	buf[count] = '\0';
 
-	/*
-	 * "<hexid>"          read the MIB
-	 * "w <hexid> <len>"  write <len> zero bytes to it
-	 *
-	 * The filter MIBs in this family are write-only -- reads of 0x101A and
-	 * 0x101B fail even though the driver writes both successfully -- so a
-	 * read cannot tell us whether 0x101C exists.  A write can: the confirm
-	 * carries a status, and wsm_generic_confirm() logs the firmware's own
-	 * code on rejection.  Sweeping the length and watching which one is
-	 * accepted is what pins the payload size down.
-	 *
-	 * Zeros are the benign payload here: for the two documented siblings a
-	 * zeroed header means nrFilters = 0, i.e. "no filters", which is what
-	 * the driver already writes to disable them.
-	 */
+	buf = memdup_user_nul(user_buf, count);
+	if (IS_ERR(buf))
+		return PTR_ERR(buf);
+
 	p = strim(buf);
+
+	/* "wx <hexid> <hexbytes>"  write those exact bytes */
+	if (p[0] == 'w' && p[1] == 'x' && (p[2] == ' ' || p[2] == '\t')) {
+		unsigned int wlen = 0;
+		char *hex;
+
+		mib_id = simple_strtoul(p + 3, &hex, 16);
+		if (hex == p + 3 || mib_id > 0xFFFF) {
+			ret = -EINVAL;
+			goto out_buf;
+		}
+
+		data = kzalloc(BES2600_MIB_PROBE_LEN, GFP_KERNEL);
+		if (!data) {
+			ret = -ENOMEM;
+			goto out_buf;
+		}
+
+		/* Accept "01 02", "01:02" and "0102" alike. */
+		while (*hex) {
+			int hi, lo;
+
+			if (*hex == ' ' || *hex == '\t' || *hex == ':') {
+				hex++;
+				continue;
+			}
+			hi = hex_to_bin(hex[0]);
+			lo = hex[1] ? hex_to_bin(hex[1]) : -1;
+			if (hi < 0 || lo < 0 || wlen >= BES2600_MIB_PROBE_LEN) {
+				kfree(data);
+				ret = -EINVAL;
+				goto out_buf;
+			}
+			data[wlen++] = (hi << 4) | lo;
+			hex += 2;
+		}
+		if (!wlen) {
+			kfree(data);
+			ret = -EINVAL;
+			goto out_buf;
+		}
+
+		ret = wsm_write_mib(hw_priv, (u16)mib_id, data, wlen, 0);
+		bes_info("mib_probe: WRITE 0x%04x len=%u -> %s (%d)\n",
+			 mib_id, wlen, ret ? "REJECTED" : "ACCEPTED", ret);
+		print_hex_dump(KERN_INFO, "mib_probe: sent ", DUMP_PREFIX_OFFSET,
+			       16, 1, data, wlen, false);
+		kfree(data);
+		ret = count;
+		goto out_buf;
+	}
+
+	/* "w <hexid> <len>"  write <len> zero bytes */
 	if (p[0] == 'w' && (p[1] == ' ' || p[1] == '\t')) {
 		unsigned int wlen;
 
-		if (sscanf(p + 1, "%x %u", &mib_id, &wlen) != 2)
-			return -EINVAL;
-		if (mib_id > 0xFFFF || wlen == 0 || wlen > BES2600_MIB_PROBE_LEN)
-			return -EINVAL;
+		if (sscanf(p + 1, "%x %u", &mib_id, &wlen) != 2) {
+			ret = -EINVAL;
+			goto out_buf;
+		}
+		if (mib_id > 0xFFFF || wlen == 0 ||
+		    wlen > BES2600_MIB_PROBE_LEN) {
+			ret = -EINVAL;
+			goto out_buf;
+		}
 
 		data = kzalloc(wlen, GFP_KERNEL);
-		if (!data)
-			return -ENOMEM;
+		if (!data) {
+			ret = -ENOMEM;
+			goto out_buf;
+		}
 
 		ret = wsm_write_mib(hw_priv, (u16)mib_id, data, wlen, 0);
 		bes_info("mib_probe: WRITE 0x%04x len=%u -> %s (%d)\n",
 			 mib_id, wlen, ret ? "REJECTED" : "ACCEPTED", ret);
 		kfree(data);
-		return count;
+		ret = count;
+		goto out_buf;
 	}
 
-	if (kstrtouint(p, 16, &mib_id) || mib_id > 0xFFFF)
-		return -EINVAL;
+	/* "<hexid>"  read the MIB */
+	if (kstrtouint(p, 16, &mib_id) || mib_id > 0xFFFF) {
+		ret = -EINVAL;
+		goto out_buf;
+	}
+	kfree(buf);
 
 	data = kzalloc(BES2600_MIB_PROBE_LEN, GFP_KERNEL);
 	if (!data)
@@ -564,6 +647,10 @@ static ssize_t bes2600_mib_probe_write(struct file *file,
 
 	kfree(data);
 	return count;
+
+out_buf:
+	kfree(buf);
+	return ret;
 }
 
 /*
