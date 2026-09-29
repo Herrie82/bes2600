@@ -279,7 +279,8 @@ int bes2600_wow_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
 	 * armed by userspace is honoured by declining, not by silently doing
 	 * something different.
 	 */
-	if (!wowlan || !wowlan->any) {
+	if (!wowlan || !(wowlan->any ||
+			 (wowlan->magic_pkt && bes2600_magic_wowlan))) {
 		bes_devel("no supported wowlan trigger armed, normal suspend\n");
 		return 1;
 	}
@@ -427,6 +428,50 @@ static void bes2600_set_ehter_and_udp_filter(struct bes2600_common *hw_priv,
 	wsm_set_ether_type_filter(hw_priv, ether_type, if_id);
 }
 
+/*
+ * Program the inferred magic-packet filter (MIB 0x101C).
+ *
+ * The pattern is the canonical WoL magic packet - six 0xFF bytes followed by
+ * the station MAC repeated - truncated to bes2600_magic_mac_repeats copies.
+ * Both that count and the match offset are module parameters because they are
+ * the parts of the guess most likely to be wrong, and the firmware will not
+ * tell us: it accepts any payload length for this MIB. See the comment on
+ * struct wsm_magic_filter in wsm.h.
+ */
+static void bes2600_set_magic_filter(struct bes2600_vif *priv)
+{
+	struct bes2600_common *hw_priv = cw12xx_vifpriv_to_hwpriv(priv);
+	struct {
+		struct wsm_magic_filter_hdr hdr;
+		struct wsm_magic_filter filter;
+	} __packed arg = { };
+	int repeats, len, i;
+
+	if (!bes2600_magic_wowlan)
+		return;
+
+	repeats = clamp(bes2600_magic_mac_repeats, 1, 16);
+	len = 6 + repeats * ETH_ALEN;
+
+	arg.hdr.nrFilters = 1;
+	arg.filter.filterAction = WSM_FILTER_ACTION_FILTER_IN;
+	arg.filter.offset = (u8)bes2600_magic_offset;
+	arg.filter.magicPatternLength = len;
+	memset(arg.filter.magicPattern, 0xFF, 6);
+	for (i = 0; i < repeats; i++)
+		memcpy(arg.filter.magicPattern + 6 + i * ETH_ALEN,
+		       priv->vif->addr, ETH_ALEN);
+
+	bes_devel("magic filter: offset %d, %d MAC copies, %d pattern bytes\n",
+		  arg.filter.offset, repeats, len);
+
+	/* A failure here is worth seeing, but it must not stop the suspend:
+	 * the RX filters above already quiet the chip. */
+	if (wsm_set_magic_filter(hw_priv, &arg.hdr, len, priv->if_id))
+		wiphy_warn(hw_priv->hw->wiphy,
+			   "magic filter (MIB 0x101C) rejected\n");
+}
+
 static int __bes2600_wow_suspend(struct bes2600_vif *priv,
 				struct cfg80211_wowlan *wowlan)
 {
@@ -460,6 +505,8 @@ static int __bes2600_wow_suspend(struct bes2600_vif *priv,
 	 */
 	bes2600_set_ehter_and_udp_filter(hw_priv, &bes2600_ether_type_filter_on.hdr,
 				&bes2600_udp_port_filter_on.hdr, priv->if_id);
+
+	bes2600_set_magic_filter(priv);
 
 	/* Set ipv6 filer */
 #ifdef IPV6_FILTERING

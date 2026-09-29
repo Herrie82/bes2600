@@ -646,6 +646,11 @@ struct bes2600_vif;
 /* Advanced filtering options */
 #define WSM_MAX_FILTER_ELEMENTS		(4)
 
+/* A WoL magic packet is 6 x 0xFF followed by 16 copies of the MAC: 102 bytes.
+ * Nothing documents what 0x101C will accept, so this is simply large enough
+ * for the whole thing. */
+#define WSM_MAGIC_PATTERN_MAX		(6 + 16 * ETH_ALEN)
+
 #define WSM_FILTER_ACTION_IGNORE	(0)
 #define WSM_FILTER_ACTION_FILTER_OUT	(1)
 #define WSM_FILTER_ACTION_FILTER_IN	(2)
@@ -1791,6 +1796,68 @@ static inline int wsm_set_udp_port_filter(struct bes2600_common *hw_priv,
 	size_t size = sizeof(struct wsm_udp_port_filter_hdr) +
 		arg->nrFilters * sizeof(struct wsm_udp_port_filter);
 	return wsm_write_mib(hw_priv, WSM_MIB_ID_SET_UDPPORT_DATAFRAME_FILTER,
+		arg, size, if_id);
+}
+
+/* 4.34 SetMagicDataFrameFilter -- layout INFERRED, see below.
+ *
+ * The ST-Ericsson spec transcription every driver in this lineage inherited
+ * stops writing structs at 4.33: mainline cw1200, the Silicon Labs wfx trees
+ * and XRadio's XR819/XR829 all carry the 0x101C #define with nothing under it,
+ * and XR829's header puts "This is the end of specification." directly below
+ * it. So there is no authoritative struct to copy.
+ *
+ * What we do know: the later wfx/HIF generation of this same firmware family
+ * does have one, recovered from the patch that deleted it as unused
+ * ("staging: wfx: remove unused definitions from the hif API"):
+ *
+ *	struct hif_mib_magic_data_frame_condition {
+ *		u8 condition_idx; u8 offset; u8 magic_pattern_length;
+ *		u8 reserved;      u8 magic_pattern[HIF_API_MAGIC_PATTERN_SIZE];
+ *	} __packed;
+ *
+ * That gives the semantics - an offset, a length and a byte pattern - but not
+ * the wire format, because HIF is a later API that reshaped these filters.
+ * The two filters BOTH generations implement prove it: for the UDP port filter
+ * WSM sends hdr{nrFilters,reserved[3]} plus {filterAction,portType,udpPort}
+ * with the port at offset 6, while HIF sends a flat
+ * {condition_idx,protocol,which_port,reserved1,port_number,reserved2[2]} with
+ * the port at offset 4. Same eight bytes, different arrangement.
+ *
+ * So this follows the WSM convention of its two implemented neighbours above -
+ * a count header followed by entries that begin with filterAction - and takes
+ * offset/length/pattern from HIF for the rest. It is a hypothesis, and the
+ * firmware cannot correct it: it accepts any payload length for 0x101C, so a
+ * wrong layout is written without complaint. Only a functional test tells you
+ * anything, which is why bes2600_magic_wowlan defaults off.
+ */
+struct wsm_magic_filter_hdr {
+	u8 nrFilters;		/* Up to WSM_MAX_FILTER_ELEMENTS */
+	u8 reserved[3];
+} __packed;
+
+struct wsm_magic_filter {
+	u8 filterAction;	/* WSM_FILTER_ACTION_XXX */
+	u8 offset;		/* where in the frame the pattern must sit */
+	u8 magicPatternLength;	/* bytes of magicPattern[] that matter */
+	u8 reserved;
+	u8 magicPattern[WSM_MAGIC_PATTERN_MAX];
+} __packed;
+
+/* A filter is sent as the header plus exactly the pattern bytes in use, the
+ * same way the ethertype and UDP filters send only nrFilters entries. */
+static inline int wsm_set_magic_filter(struct bes2600_common *hw_priv,
+				struct wsm_magic_filter_hdr *arg,
+				size_t pattern_len,
+				int if_id)
+{
+	size_t size = sizeof(struct wsm_magic_filter_hdr);
+
+	if (arg->nrFilters)
+		size += offsetof(struct wsm_magic_filter, magicPattern) +
+			pattern_len;
+
+	return wsm_write_mib(hw_priv, WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER,
 		arg, size, if_id);
 }
 

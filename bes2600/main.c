@@ -327,6 +327,37 @@ static const struct ieee80211_ops bes2600_ops = {
 };
 
 #ifdef CONFIG_PM
+/*
+ * bes2600_magic_wowlan - advertise and program magic-packet WoWLAN.
+ *
+ * EXPERIMENTAL, and off by default on purpose. The firmware has the MIB for
+ * it (WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER, 0x101C) but no driver in this
+ * lineage has ever had its payload layout, so what struct wsm_magic_filter
+ * sends is inferred - see the comment on it in wsm.h. The firmware accepts
+ * any length for this MIB, so a wrong guess is written without an error and
+ * simply misconfigures RX filtering. Turn this on to test the guess against
+ * real hardware, not because you want wake-on-LAN to be reliable yet.
+ *
+ * bes2600_magic_offset and bes2600_magic_mac_repeats exist so the two parts
+ * of the guess that are most likely wrong can be swept without rebuilding:
+ * where in the frame the pattern is matched, and how much of the canonical
+ * 6 x 0xFF + 16 x MAC magic packet to hand the matcher.
+ */
+bool bes2600_magic_wowlan;
+module_param_named(magic_wowlan, bes2600_magic_wowlan, bool, 0644);
+MODULE_PARM_DESC(magic_wowlan,
+	"advertise magic-packet WoWLAN using an inferred MIB 0x101C layout (experimental, default off)");
+
+int bes2600_magic_offset;
+module_param_named(magic_offset, bes2600_magic_offset, int, 0644);
+MODULE_PARM_DESC(magic_offset,
+	"offset the firmware should match the magic pattern at (default 0)");
+
+int bes2600_magic_mac_repeats = 16;
+module_param_named(magic_mac_repeats, bes2600_magic_mac_repeats, int, 0644);
+MODULE_PARM_DESC(magic_mac_repeats,
+	"MAC copies after the 6 x 0xFF sync, 1-16 (default 16, the full magic packet)");
+
 static const struct wiphy_wowlan_support bes2600_wowlan_support = {
 	/*
 	 * Advertise only what bes2600_wow_suspend() actually programs.  It
@@ -357,14 +388,21 @@ static const struct wiphy_wowlan_support bes2600_wowlan_support = {
 	 *    has inherited the truncated copy.
 	 *
 	 * So WIPHY_WOWLAN_ANY is not a placeholder, it is what this hardware
-	 * actually offers.  The family's suspend path quiets the chip with the
-	 * ethertype and UDP-port filters below and wakes on whatever is left,
-	 * which is precisely "any" -- there is no magic-packet match to
-	 * advertise.  Do not add WIPHY_WOWLAN_MAGIC_PKT without a firmware
-	 * that documents 0x101C.
+	 * actually offers by default.  The family's suspend path quiets the
+	 * chip with the ethertype and UDP-port filters below and wakes on
+	 * whatever is left, which is precisely "any".
+	 *
+	 * bes2600_magic_wowlan opts in to an *inferred* 0x101C layout so it can
+	 * be tested on real hardware -- see the comment on struct
+	 * wsm_magic_filter in wsm.h for where each field comes from and why the
+	 * firmware cannot tell us whether it is right.  It stays off by default:
+	 * a wrong layout is accepted silently and would misconfigure RX
+	 * filtering rather than fail.
 	 */
 	.flags = WIPHY_WOWLAN_ANY,
 };
+
+static struct wiphy_wowlan_support bes2600_wowlan_support_magic;
 #endif
 
 #ifdef CONFIG_BES2600_WAPI_SUPPORT
@@ -577,7 +615,15 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 
 	/* Support only for limited wowlan functionalities */
 #ifdef CONFIG_PM
-	hw->wiphy->wowlan = &bes2600_wowlan_support;
+	if (bes2600_magic_wowlan) {
+		bes2600_wowlan_support_magic = bes2600_wowlan_support;
+		bes2600_wowlan_support_magic.flags |= WIPHY_WOWLAN_MAGIC_PKT;
+		hw->wiphy->wowlan = &bes2600_wowlan_support_magic;
+		wiphy_info(hw->wiphy,
+			   "magic-packet wowlan enabled; MIB 0x101C layout is inferred, not documented\n");
+	} else {
+		hw->wiphy->wowlan = &bes2600_wowlan_support;
+	}
 #endif
 
 #if defined(CONFIG_BES2600_USE_STE_EXTENSIONS)

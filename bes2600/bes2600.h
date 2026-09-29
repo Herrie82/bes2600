@@ -827,6 +827,15 @@ struct ipv6_addr_info {
 };
 #endif /*IPV6_FILTERING*/
 
+/* Experimental magic-packet WoWLAN knobs, defined in main.c. The MIB layout
+ * they drive is inferred rather than documented - see struct wsm_magic_filter
+ * in wsm.h - so magic_wowlan defaults off. */
+#ifdef CONFIG_PM
+extern bool bes2600_magic_wowlan;
+extern int bes2600_magic_offset;
+extern int bes2600_magic_mac_repeats;
+#endif
+
 /* interfaces for the drivers */
 int bes2600_core_probe(const struct sbus_ops *sbus_ops,
 		      struct sbus_priv *sbus,
