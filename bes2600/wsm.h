@@ -1826,10 +1826,19 @@ static inline int wsm_set_udp_port_filter(struct bes2600_common *hw_priv,
  *
  * So this follows the WSM convention of its two implemented neighbours above -
  * a count header followed by entries that begin with filterAction - and takes
- * offset/length/pattern from HIF for the rest. It is a hypothesis, and the
- * firmware cannot correct it: it accepts any payload length for 0x101C, so a
- * wrong layout is written without complaint. Only a functional test tells you
- * anything, which is why bes2600_magic_wowlan defaults off.
+ * offset/length/pattern from HIF for the rest.
+ *
+ * TESTED 2026-09-29 ON A PINETAB2, AND IT DOES NOT WORK.  Armed and
+ * associated, suspended deep with a 300 s RTC backstop; a unicast magic
+ * packet 35 s in did nothing and the device slept the full 301 s.  The write
+ * drew no error, which is exactly the hazard: the firmware accepts any
+ * payload length for 0x101C, so being accepted says nothing.
+ *
+ * What that rules out is this arrangement, not the MIB.  Still unknown, and
+ * not reachable from the module parameters: whether byte 0 is filterAction
+ * (WSM style) or condition_idx (HIF style), whether there is a count header
+ * at all, and what the firmware expects the pattern to match against.  Do
+ * not enable bes2600_magic_wowlan expecting wake-on-LAN to work.
  */
 struct wsm_magic_filter_hdr {
 	u8 nrFilters;		/* Up to WSM_MAX_FILTER_ELEMENTS */

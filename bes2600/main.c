@@ -392,12 +392,24 @@ static const struct wiphy_wowlan_support bes2600_wowlan_support = {
 	 * chip with the ethertype and UDP-port filters below and wakes on
 	 * whatever is left, which is precisely "any".
 	 *
-	 * bes2600_magic_wowlan opts in to an *inferred* 0x101C layout so it can
-	 * be tested on real hardware -- see the comment on struct
-	 * wsm_magic_filter in wsm.h for where each field comes from and why the
-	 * firmware cannot tell us whether it is right.  It stays off by default:
-	 * a wrong layout is accepted silently and would misconfigure RX
-	 * filtering rather than fail.
+	 * bes2600_magic_wowlan opts in to an *inferred* 0x101C layout -- see the
+	 * comment on struct wsm_magic_filter in wsm.h for where each field comes
+	 * from.  That layout has now been TESTED ON HARDWARE AND DOES NOT WORK:
+	 *
+	 *   PineTab2, 2026-09-29.  Armed (iw reported "WoWLAN is enabled: wake
+	 *   up on magic packet"), associated, suspended deep with a 300 s RTC
+	 *   alarm as a backstop.  A unicast magic packet sent 35 s in did
+	 *   nothing; the device slept the full 301 s and woke on the alarm.
+	 *   The MIB write itself drew no complaint, which is the point: the
+	 *   firmware takes any payload length for 0x101C, so a wrong layout is
+	 *   accepted in silence.
+	 *
+	 * So this stays off by default, and enabling it advertises a trigger
+	 * that does not fire -- the same trap that WIPHY_WOWLAN_DISCONNECT was
+	 * removed for above.  It is kept only as a harness for trying other
+	 * layouts (magic_offset and magic_mac_repeats sweep two of the
+	 * unknowns; field order and whether there is a count header are not
+	 * reachable that way and would need a code change).
 	 */
 	.flags = WIPHY_WOWLAN_ANY,
 };
