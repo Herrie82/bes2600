@@ -27,6 +27,9 @@
 #include <linux/mmc/sdio.h>
 #include <linux/mmc/sdio_func.h>
 #include <linux/version.h>
+#include <linux/of_irq.h>
+#include <linux/interrupt.h>
+#include <linux/pm_wakeup.h>
 
 #include "bes2600.h"
 #include "sbus.h"
@@ -85,6 +88,7 @@ struct sbus_priv {
 	long unsigned int gpio_wakup_flags;
 	struct mutex sbus_mutex;
 	bool retune_protected;
+	bool hostwake_armed;	/* enable_irq_wake() is currently in effect */
 #ifdef BES_SDIO_RXTX_TOGGLE
 	u8 next_toggle;
 	int tx_data_toggle;
@@ -213,6 +217,8 @@ static const struct sdio_device_id bes2600_sdio_ids[] = {
 };
 MODULE_DEVICE_TABLE(sdio, bes2600_sdio_ids);
 
+static int bes2600_wlan_bt_hostwake_register(void);
+static void bes2600_wlan_bt_hostwake_unregister(void);
 #ifdef BES2600_GPIO_WAKEUP_AP
 static int bes2600_gpio_wakeup_ap_config(struct sbus_priv *priv);
 #endif
@@ -1474,6 +1480,8 @@ static void bes2600_platform_data_deinit(struct device *dev)
 	pdata->powerup = NULL;
 	pdata->wakeup = NULL;
 	pdata->host_wakeup = NULL;
+	pdata->host_wakeup_irq = 0;
+	pdata->host_wakeup_irq_flags = 0;
 	bes_pdata_owner = NULL;
 
 	/*
@@ -1555,6 +1563,33 @@ static int bes2600_platform_data_init(struct device *dev)
 		bes_err("can't request host_wake_gpio (%ld)\n", PTR_ERR(pdata->host_wakeup));
 		pdata->host_wakeup = NULL;
  	}
+
+	/*
+	 * Turn WIFI_WAKE_HOST_H into an IRQ so it can be armed as a system
+	 * wake source.  Without this the line is read as a plain input and
+	 * nothing the chip does while the host is suspended is ever noticed --
+	 * see bes2600_hostwake_register() for why that mattered.
+	 *
+	 * Prefer the node's "interrupts" property, which is where the trigger
+	 * type lives; fall back to the GPIO.  The PineTab2 node carries both:
+	 *   interrupts = <RK_PC4 IRQ_TYPE_EDGE_RISING>;
+	 *   host-wakeup-gpios = <&gpio0 RK_PC4 GPIO_ACTIVE_HIGH>;
+	 */
+	pdata->host_wakeup_irq = of_irq_get(np, 0);
+	if (pdata->host_wakeup_irq <= 0 && pdata->host_wakeup)
+		pdata->host_wakeup_irq = gpiod_to_irq(pdata->host_wakeup);
+	if (pdata->host_wakeup_irq <= 0) {
+		bes_warn("no host-wake irq, falling back to in-band SDIO wake\n");
+		pdata->host_wakeup_irq = 0;
+		pdata->host_wakeup_irq_flags = 0;
+	} else {
+		pdata->host_wakeup_irq_flags =
+			irq_get_trigger_type(pdata->host_wakeup_irq);
+		if (!pdata->host_wakeup_irq_flags)
+			pdata->host_wakeup_irq_flags = IRQF_TRIGGER_RISING;
+		bes_info("host-wake irq %d, trigger 0x%lx\n",
+			 pdata->host_wakeup_irq, pdata->host_wakeup_irq_flags);
+	}
 
 	pdata->wlan_bt_hostwake_registered = false;
 	pdata->inited = true;
@@ -1850,10 +1885,6 @@ static void bes2600_sdio_empty_work(struct sbus_priv *self)
 	self->next_toggle = 0;
 #endif
 }
-
-#ifdef BES2600_GPIO_WAKEUP_AP
-static void bes2600_wlan_bt_hostwake_unregister(void);
-#endif
 
 static int bes2600_sdio_deactive(struct sbus_priv *self, int sub_system)
 {
@@ -2200,6 +2231,11 @@ static int bes2600_sdio_probe(struct sdio_func *func,
 	if (ret)
 		goto err;
 
+	/* Arm-able wake source, if the board has one.  Failing to get it is
+	 * not fatal: suspend falls back to in-band SDIO wake, and failing
+	 * that warns that nothing can wake the host. */
+	bes2600_wlan_bt_hostwake_register();
+
 	self->pdata = bes2600_get_platform_data();
 	self->func = func;
 	self->dev = &func->dev;
@@ -2273,6 +2309,7 @@ out:
 
 err:
 	bes_err("%s failed, func:%d\n", __func__, func->num);
+	bes2600_wlan_bt_hostwake_unregister();
 	bes2600_platform_data_deinit(&func->dev);
 	bes2600_host_restore_removable(func);
 	sdio_claim_host(func);
@@ -2352,6 +2389,7 @@ static void bes2600_sdio_remove(struct sdio_func *func)
 {
 	struct sbus_priv *self = sdio_get_drvdata(func);
 
+	bes2600_wlan_bt_hostwake_unregister();
 	bes2600_platform_data_deinit(&func->dev);
 	bes2600_host_restore_removable(func);
 	bes_devel("%s called:%p,%d\n", __func__, func, func->num);
@@ -2384,62 +2422,128 @@ static void bes2600_sdio_remove(struct sdio_func *func)
 
 #ifdef BES2600_GPIO_WAKEUP_AP
 
-static irqreturn_t bes2600_wlan_bt_hostwake_thread(int irq, void *dev_id)
+/*
+ * Host wake: arm WIFI_WAKE_HOST_H as a system wake source.
+ *
+ * Both of these used to be stubs -- they set a flag, logged "this function
+ * does nothing", and cleared pdata->wakeup_source.  With BES2600_GPIO_WAKEUP_AP
+ * defaulting to n in the Makefile on top of that, this driver had NO way to
+ * wake the host from suspend at all: no irq_set_irq_wake() anywhere, and
+ * MMC_PM_KEEP_POWER set without MMC_PM_WAKE_SDIO_IRQ, so the in-band SDIO
+ * interrupt was not armed either.  Any WoWLAN trigger the chip matched was
+ * therefore matched into silence.
+ *
+ * The shape here is brcmfmac's, which is the reference for out-of-band SDIO
+ * wake on Rockchip: request the line as an ordinary IRQ once, then
+ * enable_irq_wake() it for the duration of the suspend and disable_irq_wake()
+ * on resume.  cw1200, the driver this one descends from, does the same thing
+ * through its hwbus power_mgmt op (cw1200_sdio_pm -> irq_set_irq_wake).
+ *
+ * The handler deliberately does almost nothing.  Its job is to exist so the
+ * IRQ can be a wake source; the resume path re-enables the bus and the normal
+ * SDIO interrupt then delivers whatever the chip has queued.
+ */
+static irqreturn_t bes2600_hostwake_isr(int irq, void *dev_id)
 {
 	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
 
-	bes_devel("bes2600_wlan_hostwake:%d\n", dev_id == (void *)pdata);
-
-	if (dev_id == (void *)pdata) {
-		bes2600_chrdev_wakeup_by_event_set(WAKEUP_EVENT_SETTING);
-		pdata->wakeup_source = true;
-		disable_irq_nosync(irq);
-		return IRQ_HANDLED;
-	} else {
+	if (dev_id != (void *)pdata)
 		return IRQ_NONE;
-	}
+
+	/* Record the reason the way the rest of the driver reports it; this
+	 * came from the vendor's own handler, which was never wired up. */
+	bes2600_chrdev_wakeup_by_event_set(WAKEUP_EVENT_SETTING);
+	pdata->wakeup_source = true;
+
+	/* Tell the PM core this is a real wake event so a suspend racing with
+	 * it is aborted rather than completing and losing it. */
+	if (bes_pdata_owner)
+		pm_wakeup_hard_event(bes_pdata_owner);
+
+	return IRQ_HANDLED;
 }
 
 static int bes2600_wlan_bt_hostwake_register(void)
 {
-	int ret = 0;
 	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
+	int ret;
 
-	// flipping internal struct registers considered as nothing
-	bes_warn("%s: this function does nothing\n", __FUNCTION__);
+	if (pdata->wlan_bt_hostwake_registered)
+		return 0;
 
-	if (pdata->wlan_bt_hostwake_registered == true) {
-		bes_err("wlan hostwake register repeatedly.\n");
-		return -1;
+	if (!pdata->host_wakeup_irq) {
+		/* No out-of-band line: bes2600_sdio_suspend() asks the MMC core
+		 * for in-band SDIO wake instead. */
+		pdata->wakeup_source = false;
+		return 0;
 	}
 
-	pdata->wlan_bt_hostwake_registered = true;
-	pdata->wakeup_source = false;
+	ret = request_irq(pdata->host_wakeup_irq, bes2600_hostwake_isr,
+			  pdata->host_wakeup_irq_flags | IRQF_ONESHOT,
+			  "bes2600_host_wake", pdata);
+	if (ret) {
+		bes_err("host-wake irq %d request failed: %d\n",
+			pdata->host_wakeup_irq, ret);
+		pdata->wakeup_source = false;
+		return ret;
+	}
 
-	return ret;
+	/* Probe that the irqchip can wake at all, then leave it disarmed until
+	 * a suspend actually wants it.  brcmfmac does exactly this. */
+	ret = enable_irq_wake(pdata->host_wakeup_irq);
+	if (ret) {
+		bes_err("host-wake irq %d cannot wake: %d\n",
+			pdata->host_wakeup_irq, ret);
+		free_irq(pdata->host_wakeup_irq, pdata);
+		pdata->wakeup_source = false;
+		return ret;
+	}
+	disable_irq_wake(pdata->host_wakeup_irq);
+
+	pdata->wlan_bt_hostwake_registered = true;
+	pdata->wakeup_source = true;
+	bes_info("host-wake irq %d armed as a wake source\n",
+		 pdata->host_wakeup_irq);
+
+	return 0;
 }
 
 static void bes2600_wlan_bt_hostwake_unregister(void)
 {
-	int ret = 0;
 	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
 
-	// flipping internal struct registers considered as nothing
-	bes_warn("%s: this function does nothing\n", __FUNCTION__);
-
-	if (pdata->wlan_bt_hostwake_registered == false)
+	if (!pdata->wlan_bt_hostwake_registered)
 		return;
 
+	free_irq(pdata->host_wakeup_irq, pdata);
 	pdata->wlan_bt_hostwake_registered = false;
+	pdata->wakeup_source = false;
 }
 
+/*
+ * Tell the firmware how to assert WIFI_WAKE_HOST_H.
+ *
+ * This is the chip half of the wake path; bes2600_wlan_bt_hostwake_register()
+ * is the host half.  It used to be unreachable in two separate ways: the
+ * Makefile defaults BES2600_GPIO_WAKEUP_AP to n, and irq_flags below was
+ * declared 0 and never assigned, so no branch could set
+ * BES_AP_WAKEUP_CFG_VALID and the register was written as a zero.  The error
+ * path then called free_irq() on an irq variable that was also always 0 and
+ * never requested.  Both are fixed here: the trigger type comes from the
+ * device tree, resolved once in bes2600_platform_data_init().
+ */
 static int bes2600_gpio_wakeup_ap_config(struct sbus_priv *self)
 {
+	const struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
+	unsigned long irq_flags = pdata->host_wakeup_irq_flags;
 	u8 wakeup_cfg = 0;
-	int ret = 0, irq_flags = 0, irq = 0;
+	int ret = 0;
 
-    if (!bes2600_chrdev_is_signal_mode())
-        return 0;
+	if (!bes2600_chrdev_is_signal_mode())
+		return 0;
+
+	if (!pdata->host_wakeup_irq)
+		return 0;
 
 	if (irq_flags & IRQF_TRIGGER_HIGH) {
 		wakeup_cfg = BES_AP_WAKEUP_GPIO_HIGH | BES_AP_WAKEUP_CFG_VALID;
@@ -2467,7 +2571,6 @@ static int bes2600_gpio_wakeup_ap_config(struct sbus_priv *self)
 	sdio_release_host(self->func);
 	if (ret) {
 		bes_err("%s failed:%d\n", __func__, ret);
-		free_irq(irq, &bes_sdio_plat_data);
 		return ret;
 	}
 
@@ -2493,9 +2596,11 @@ static int bes2600_sdio_prepare(struct device *dev)
 
 static int bes2600_sdio_suspend(struct device *dev)
 {
-	int ret;
+	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
 	struct sdio_func *func = dev_to_sdio_func(dev);
 	struct sbus_priv *self = sdio_get_drvdata(func);
+	mmc_pm_flag_t sdio_flags;
+	int ret;
 
 	bes_devel("%s (%p,%d)enter\n", __func__, func, func->num);
 	if (func->num > 1)
@@ -2506,8 +2611,34 @@ static int bes2600_sdio_suspend(struct device *dev)
 		return -EBUSY;
 #endif
 
-	/* Notify SDIO that BES2600 will remain powered during suspend */
-	ret = sdio_set_host_pm_flags(func, MMC_PM_KEEP_POWER);
+	/*
+	 * Keep the chip powered, and arm a wake source for it.
+	 *
+	 * MMC_PM_KEEP_POWER on its own only stops the MMC core cutting the
+	 * card; it does not make anything the card does wake the host.  That
+	 * needs either the out-of-band WIFI_WAKE_HOST_H line armed with
+	 * enable_irq_wake(), or, where the board has no such line,
+	 * MMC_PM_WAKE_SDIO_IRQ so the controller treats the in-band SDIO
+	 * interrupt as a wake event.  This driver used to do neither, so no
+	 * WoWLAN trigger could ever wake the host.  brcmfmac picks between the
+	 * same two mechanisms in exactly this way.
+	 */
+	sdio_flags = MMC_PM_KEEP_POWER;
+
+	if (pdata->wlan_bt_hostwake_registered && pdata->host_wakeup_irq) {
+		ret = enable_irq_wake(pdata->host_wakeup_irq);
+		if (ret)
+			bes_err("arming host-wake irq %d failed: %d\n",
+				pdata->host_wakeup_irq, ret);
+		else
+			self->hostwake_armed = true;
+	} else if (func->card->host->pm_caps & MMC_PM_WAKE_SDIO_IRQ) {
+		sdio_flags |= MMC_PM_WAKE_SDIO_IRQ;
+	} else {
+		bes_warn("no wake source available; the chip cannot wake the host\n");
+	}
+
+	ret = sdio_set_host_pm_flags(func, sdio_flags);
 	if (ret) {
 		bes_err("Error setting SDIO pm flags: %i\n", ret);
 		return ret;
@@ -2519,10 +2650,6 @@ static int bes2600_sdio_suspend(struct device *dev)
 			return ret;
 		}
 	}
-
-#ifdef BES2600_GPIO_WAKEUP_AP
-	return bes2600_wlan_bt_hostwake_register();
-#endif
 
 	return 0;
 }
@@ -2570,16 +2697,21 @@ static int bes2600_sdio_resume_noirq(struct device *dev)
 
 static int bes2600_sdio_resume(struct device *dev)
 {
+	struct bes2600_platform_data_sdio *pdata = bes2600_get_platform_data();
 	struct sdio_func *func = dev_to_sdio_func(dev);
+	struct sbus_priv *self = sdio_get_drvdata(func);
 
 	bes_devel("%s (%p,%d)enter\n", __func__, func, func->num);
 
 	if (func->num > 1)
 		return 0;
 
-#ifdef BES2600_GPIO_WAKEUP_AP
-	bes2600_wlan_bt_hostwake_unregister();
-#endif
+	if (self && self->hostwake_armed) {
+		disable_irq_wake(pdata->host_wakeup_irq);
+		self->hostwake_armed = false;
+		if (pdata->wakeup_source)
+			bes_info("resumed with the host-wake line armed\n");
+	}
 
 	return 0;
 }

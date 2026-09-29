@@ -23,6 +23,8 @@ struct bes2600_platform_data_sdio {
 	struct gpio_desc *powerup;        /* GPIO to POWERUP signal (0 disables) */
 	struct gpio_desc *wakeup;         /* GPIO to WAKEUP signal (0 disables) */
 	struct gpio_desc *host_wakeup;    /* wifi GPIO to WAKEUP host signal (0 disables) */
+	int host_wakeup_irq;              /* host_wakeup as an IRQ, 0 if unavailable */
+	unsigned long host_wakeup_irq_flags; /* trigger type the DT asked for */
 	bool wlan_bt_hostwake_registered;/* wifi request_irq success or not */
 	bool host_nonremovable;          /* MMC_CAP_NONREMOVABLE as the host had it */
 	bool host_nonremovable_valid;    /* host_nonremovable has been sampled */

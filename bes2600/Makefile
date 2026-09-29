@@ -33,7 +33,12 @@ CONFIG_BES2600_WIFI_BOOT_ON             ?= y
 # and not wanted here) -- see bes_chardev.c where bton_pending is consumed.
 CONFIG_BES2600_BT_BOOT_ON               ?= y
 
-BES2600_GPIO_WAKEUP_AP                  ?= n
+# Out-of-band host wake on WIFI_WAKE_HOST_H.  Default y since the host and
+# chip halves were made to work (see bes2600_wlan_bt_hostwake_register and
+# bes2600_gpio_wakeup_ap_config).  It was n while both were stubs, which left
+# the driver with no way at all to wake the host from suspend.  On a board
+# with no such line the code falls back to MMC_PM_WAKE_SDIO_IRQ.
+BES2600_GPIO_WAKEUP_AP                  ?= y
 BES2600_WRITE_DPD_TO_FILE               ?= n
 BES2600_TX_MORE_RETRY                   ?= n
 
