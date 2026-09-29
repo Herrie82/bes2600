@@ -718,6 +718,7 @@ static void bes2600_pwr_trigger_delayed_work(struct bes2600_common *hw_priv)
 {
 	unsigned long max_timeout = 0;
 	bool constant_event_exist = false;
+	bool need_unlock = false;
 	unsigned long flags;
 
 	spin_lock_irqsave(&hw_priv->bes_power.pwr_lock, flags);
@@ -725,8 +726,32 @@ static void bes2600_pwr_trigger_delayed_work(struct bes2600_common *hw_priv)
 
 	if(!constant_event_exist && max_timeout > 0) {
 		bes2600_trigger_power_delay_down(&hw_priv->bes_power, max_timeout);
+	} else if(!constant_event_exist &&
+		  hw_priv->bes_power.power_state == POWER_DOWN_STATE_LOCKED) {
+		/*
+		 * No events left and the device is still held down.
+		 *
+		 * bes2600_power_down_work() is the only thing that ever calls
+		 * bes2600_pwr_unlock_device(), and it handles exactly this case
+		 * -- "no pending event, unlock device".  But the test above
+		 * used to be the only scheduler of that work and it declines
+		 * to run when max_timeout is 0, which is precisely when the
+		 * unlock is needed.  So once the list drained while the device
+		 * was LOCKED, nothing would ever unlock it again:
+		 * bes2600_pwr_device_is_idle() stayed false forever, and every
+		 * subsequent suspend failed with "wait device idle timeout"
+		 * and tore the association down, with debugfs power_events
+		 * showing an empty list the whole time.
+		 *
+		 * Queue the work immediately instead of leaving it wedged.
+		 */
+		need_unlock = true;
 	}
 	spin_unlock_irqrestore(&hw_priv->bes_power.pwr_lock, flags);
+
+	if(need_unlock)
+		queue_delayed_work(hw_priv->workqueue,
+				   &hw_priv->bes_power.power_down_work, 0);
 }
 
 static void bes2600_power_down_work(struct work_struct *work)
