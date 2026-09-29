@@ -340,8 +340,11 @@ int bes2600_wow_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
 			if(!busy_event_buffer)
 				goto revert2;
 
+			/* At bes_devel this was invisible in any normal build, which
+			 * is the one thing you want to see when a suspend has just
+			 * been refused: the list of events that were still held. */
 			if(bes2600_pwr_busy_event_record(hw_priv, busy_event_buffer, 4096) == 0) {
-				bes_devel("%s\n", busy_event_buffer);
+				bes_err("busy events at idle timeout: %s\n", busy_event_buffer);
 			} else {
 				bes_err("busy event show failed\n");
 			}
