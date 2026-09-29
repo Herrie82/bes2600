@@ -208,6 +208,31 @@ enum DRIVER_TO_MCU_MSG_ST {
 	ST_EXIT,
 };
 
+/*
+ * Upper bound on the "wait until device ready" polls in bes2600_sdio_active()
+ * and bes2600_sdio_deactive().
+ *
+ * Both loops used to spin with no cap, no delay and no timeout, exiting only
+ * on an SDIO error or when the chip finally set BES_SLAVE_STATUS_MCU_READY --
+ * the counter they incremented was only ever printed.  The confirm loop that
+ * follows each of them has always been bounded (++retries <= 200 with an
+ * msleep), so this was an oversight rather than a design.
+ *
+ * It is reachable from the system resume path: bes2600_pwr_resume_start() ->
+ * bes2600_pwr_device_exit_lp_mode() -> sbus_active(SUBSYSTEM_MCU).  A chip
+ * that does not come back out of deep sleep therefore hung resume forever,
+ * holding sbus_mutex with devices still suspended -- no USB, no WiFi, and the
+ * watchdog never rearmed because its own resume callback never ran.  Only the
+ * WoWLAN suspend path can hit it, because that is the only one that
+ * deactivates the MCU; a suspend with WiFi down resumes fine.
+ *
+ * 3 s is deliberately generous: the WIFI subsystem can be slow to report
+ * ready after a firmware download, and the point here is to fail instead of
+ * hanging, not to be strict.  Callers log and continue, so a timeout costs
+ * WiFi for that resume rather than the machine.
+ */
+#define BES2600_MCU_READY_TIMEOUT_MS	3000
+
 #define BES_VENDOR_ID	0xbe57
 #define BES_DEVICE_ID_2002	0x2002
 
@@ -1712,6 +1737,7 @@ static int bes2600_sdio_active(struct sbus_priv *self, int sub_system)
 	u8 tmp_val = 0;
 	u32 cnt = 0;
 	u32 delay_cnt = 2;
+	unsigned long ready_deadline;
 
 	/* nosignal mode only allow SUBSYSTEM_WIFI */
 	if (!bes2600_chrdev_is_signal_mode() && sub_system != SUBSYSTEM_WIFI)
@@ -1751,7 +1777,8 @@ static int bes2600_sdio_active(struct sbus_priv *self, int sub_system)
 		self->fw_started = true;
 	}
 
-	/* wait until device ready */
+	/* wait until device ready -- bounded, see BES2600_MCU_READY_TIMEOUT_MS */
+	ready_deadline = jiffies + msecs_to_jiffies(BES2600_MCU_READY_TIMEOUT_MS);
 	do {
 		sdio_claim_host(self->func);
 		ret = bes2600_sdio_readb_safe(self->func, BES_SLAVE_STATUS_REG_ID);
@@ -1760,7 +1787,18 @@ static int bes2600_sdio_active(struct sbus_priv *self, int sub_system)
 		if(ret < 0) {
 			goto err;
 		}
-	} while((ret & BES_SLAVE_STATUS_MCU_READY) == 0);
+		if((ret & BES_SLAVE_STATUS_MCU_READY) != 0)
+			break;
+		if(time_after(jiffies, ready_deadline)) {
+			bes_err("active: mcu not ready after %d ms, sub_sys:%d\n",
+				BES2600_MCU_READY_TIMEOUT_MS, sub_system);
+			if(sub_system == SUBSYSTEM_WIFI)
+				self->fw_started = false;
+			mutex_unlock(&self->sbus_mutex);
+			return -ETIMEDOUT;
+		}
+		msleep(1);
+	} while(1);
 
 	do {
 		/* claim sdio host */
@@ -1895,6 +1933,7 @@ static int bes2600_sdio_deactive(struct sbus_priv *self, int sub_system)
 	u32 cnt = 0;
 	u32 delay_cnt = 2;
 	int ret;
+	unsigned long ready_deadline;
 
 	/* don't read/write sdio when sdio error */
 	if (bes2600_chrdev_is_bus_error())
@@ -1923,7 +1962,8 @@ static int bes2600_sdio_deactive(struct sbus_priv *self, int sub_system)
 			return -EINVAL;
 		}
 
-		/* wait until device ready */
+		/* wait until device ready -- bounded, see BES2600_MCU_READY_TIMEOUT_MS */
+		ready_deadline = jiffies + msecs_to_jiffies(BES2600_MCU_READY_TIMEOUT_MS);
 		do {
 			sdio_claim_host(self->func);
 			ret = bes2600_sdio_readb_safe(self->func, BES_SLAVE_STATUS_REG_ID);
@@ -1933,7 +1973,16 @@ static int bes2600_sdio_deactive(struct sbus_priv *self, int sub_system)
 			if(ret < 0) {
 				goto err;
 			}
-		} while((ret & BES_SLAVE_STATUS_MCU_READY) == 0);
+			if((ret & BES_SLAVE_STATUS_MCU_READY) != 0)
+				break;
+			if(time_after(jiffies, ready_deadline)) {
+				bes_err("deactive: mcu not ready after %d ms, sub_sys:%d\n",
+					BES2600_MCU_READY_TIMEOUT_MS, sub_system);
+				mutex_unlock(&self->sbus_mutex);
+				return -ETIMEDOUT;
+			}
+			msleep(1);
+		} while(1);
 
 		do {
 			/* claim sdio host */
