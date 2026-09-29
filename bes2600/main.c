@@ -330,28 +330,34 @@ static const struct ieee80211_ops bes2600_ops = {
 /*
  * bes2600_magic_wowlan - advertise and program magic-packet WoWLAN.
  *
- * EXPERIMENTAL, and off by default on purpose. The firmware has the MIB for
- * it (WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER, 0x101C) but no driver in this
- * lineage has ever had its payload layout, so what struct wsm_magic_filter
- * sends is inferred - see the comment on it in wsm.h. The firmware accepts
- * any length for this MIB, so a wrong guess is written without an error and
- * simply misconfigures RX filtering. Turn this on to test the guess against
- * real hardware, not because you want wake-on-LAN to be reliable yet.
+ * Off by default. The firmware has the MIB for it
+ * (WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER, 0x101C) and its payload layout is
+ * now known: it was measured on hardware rather than copied from a spec,
+ * because no driver in this lineage and no BES build has ever carried the
+ * struct. The derivation, the evidence and the caveats are on struct
+ * wsm_magic_filter in wsm.h, and that comment is the thing to read before
+ * changing any of this.
  *
- * bes2600_magic_offset and bes2600_magic_mac_repeats exist so the two parts
- * of the guess that are most likely wrong can be swept without rebuilding:
- * where in the frame the pattern is matched, and how much of the canonical
- * 6 x 0xFF + 16 x MAC magic packet to hand the matcher.
+ * What is established is that the firmware parses and byte-exactly matches
+ * this struct while awake. Whether a match also wakes the host out of
+ * suspend is a separate property and is the reason this stays off by
+ * default.
+ *
+ * bes2600_magic_offset and bes2600_magic_mac_repeats remain module
+ * parameters so the two things a deployment can legitimately need to vary --
+ * where the pattern sits for a non-UDP magic packet, and how much of the
+ * 6 x 0xFF + 16 x MAC pattern to hand the matcher -- can be changed without
+ * a rebuild.
  */
 bool bes2600_magic_wowlan;
 module_param_named(magic_wowlan, bes2600_magic_wowlan, bool, 0644);
 MODULE_PARM_DESC(magic_wowlan,
-	"advertise magic-packet WoWLAN using an inferred MIB 0x101C layout (experimental, default off)");
+	"advertise magic-packet WoWLAN via MIB 0x101C (default off, host wake unverified)");
 
-int bes2600_magic_offset;
+int bes2600_magic_offset = BES2600_MAGIC_OFFSET_UDP;
 module_param_named(magic_offset, bes2600_magic_offset, int, 0644);
 MODULE_PARM_DESC(magic_offset,
-	"offset the firmware should match the magic pattern at (default 0)");
+	"where to match the magic pattern, from the first LLC/SNAP byte (default 36, the payload of an IPv4/UDP datagram; use 8 for a raw ethertype 0x0842 magic packet)");
 
 int bes2600_magic_mac_repeats = 16;
 module_param_named(magic_mac_repeats, bes2600_magic_mac_repeats, int, 0644);
@@ -392,24 +398,21 @@ static const struct wiphy_wowlan_support bes2600_wowlan_support = {
 	 * chip with the ethertype and UDP-port filters below and wakes on
 	 * whatever is left, which is precisely "any".
 	 *
-	 * bes2600_magic_wowlan opts in to an *inferred* 0x101C layout -- see the
-	 * comment on struct wsm_magic_filter in wsm.h for where each field comes
-	 * from.  That layout has now been TESTED ON HARDWARE AND DOES NOT WORK:
+	 * bes2600_magic_wowlan opts in to programming 0x101C.  Its layout was
+	 * unknown to every driver in this lineage and was recovered by
+	 * measurement on a PineTab2 on 2026-09-29; the evidence is on struct
+	 * wsm_magic_filter in wsm.h.  A first, inferred layout -- a count
+	 * header followed by an entry, by analogy with the ethertype and
+	 * UDP-port filters -- was wrong, and did not wake the device.  The
+	 * correct form has no count header.
 	 *
-	 *   PineTab2, 2026-09-29.  Armed (iw reported "WoWLAN is enabled: wake
-	 *   up on magic packet"), associated, suspended deep with a 300 s RTC
-	 *   alarm as a backstop.  A unicast magic packet sent 35 s in did
-	 *   nothing; the device slept the full 301 s and woke on the alarm.
-	 *   The MIB write itself drew no complaint, which is the point: the
-	 *   firmware takes any payload length for 0x101C, so a wrong layout is
-	 *   accepted in silence.
-	 *
-	 * So this stays off by default, and enabling it advertises a trigger
-	 * that does not fire -- the same trap that WIPHY_WOWLAN_DISCONNECT was
-	 * removed for above.  It is kept only as a harness for trying other
-	 * layouts (magic_offset and magic_mac_repeats sweep two of the
-	 * unknowns; field order and whether there is a count header are not
-	 * reachable that way and would need a code change).
+	 * What is proven is that the firmware parses the struct and matches
+	 * the pattern byte-exactly against received frames while awake.  What
+	 * is NOT yet proven is that a match wakes the host out of suspend,
+	 * which is a property of the firmware's sleep path rather than of the
+	 * filter.  Until that is measured this stays off by default, because
+	 * advertising a trigger that does not fire is the same trap
+	 * WIPHY_WOWLAN_DISCONNECT was removed for above.
 	 */
 	.flags = WIPHY_WOWLAN_ANY,
 };

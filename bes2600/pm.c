@@ -429,47 +429,73 @@ static void bes2600_set_ehter_and_udp_filter(struct bes2600_common *hw_priv,
 }
 
 /*
- * Program the inferred magic-packet filter (MIB 0x101C).
+ * Program the magic-packet filter (MIB 0x101C).
  *
- * The pattern is the canonical WoL magic packet - six 0xFF bytes followed by
- * the station MAC repeated - truncated to bes2600_magic_mac_repeats copies.
- * Both that count and the match offset are module parameters because they are
- * the parts of the guess most likely to be wrong, and the firmware will not
- * tell us: it accepts any payload length for this MIB. See the comment on
- * struct wsm_magic_filter in wsm.h.
+ * The layout is the one measured in wsm.h -- a flat struct with no count
+ * header, and an offset counted from the first LLC/SNAP byte.  The pattern is
+ * the canonical wake-on-LAN magic packet, six 0xFF bytes followed by the
+ * station MAC repeated, truncated to bes2600_magic_mac_repeats copies.
+ *
+ * bes2600_magic_offset defaults to BES2600_MAGIC_OFFSET_UDP, where the
+ * payload of an IPv4/UDP datagram with no IP options begins.  That is where
+ * every ordinary wake-on-LAN sender puts the pattern.  It stays a module
+ * parameter because a magic packet sent raw in an ethertype 0x0842 frame puts
+ * it at 8 instead, and because IP options would shift it.
+ *
+ * bes2600_magic_mac_repeats stays a parameter too.  Sixteen copies is what
+ * the standard says and what senders emit, but it makes the payload 106 bytes
+ * and the longest pattern actually confirmed to match is eight.  Shortening
+ * it still matches a standard packet, since the pattern is a prefix.
  */
 static void bes2600_set_magic_filter(struct bes2600_vif *priv)
 {
 	struct bes2600_common *hw_priv = cw12xx_vifpriv_to_hwpriv(priv);
-	struct {
-		struct wsm_magic_filter_hdr hdr;
-		struct wsm_magic_filter filter;
-	} __packed arg = { };
+	struct wsm_magic_filter arg = { };
 	int repeats, len, i;
 
 	if (!bes2600_magic_wowlan)
 		return;
 
-	repeats = clamp(bes2600_magic_mac_repeats, 1, 16);
+	repeats = clamp(bes2600_magic_mac_repeats, 1,
+			(int)((WSM_MAGIC_PATTERN_MAX - 6) / ETH_ALEN));
 	len = 6 + repeats * ETH_ALEN;
 
-	arg.hdr.nrFilters = 1;
-	arg.filter.filterAction = WSM_FILTER_ACTION_FILTER_IN;
-	arg.filter.offset = (u8)bes2600_magic_offset;
-	arg.filter.magicPatternLength = len;
-	memset(arg.filter.magicPattern, 0xFF, 6);
+	arg.filterAction = WSM_FILTER_ACTION_FILTER_IN;
+	arg.offset = (u8)bes2600_magic_offset;
+	arg.magicPatternLength = len;
+	memset(arg.magicPattern, 0xFF, 6);
 	for (i = 0; i < repeats; i++)
-		memcpy(arg.filter.magicPattern + 6 + i * ETH_ALEN,
+		memcpy(arg.magicPattern + 6 + i * ETH_ALEN,
 		       priv->vif->addr, ETH_ALEN);
 
 	bes_devel("magic filter: offset %d, %d MAC copies, %d pattern bytes\n",
-		  arg.filter.offset, repeats, len);
+		  arg.offset, repeats, len);
 
 	/* A failure here is worth seeing, but it must not stop the suspend:
 	 * the RX filters above already quiet the chip. */
-	if (wsm_set_magic_filter(hw_priv, &arg.hdr, len, priv->if_id))
+	if (wsm_set_magic_filter(hw_priv, &arg, len, priv->if_id))
 		wiphy_warn(hw_priv->hw->wiphy,
 			   "magic filter (MIB 0x101C) rejected\n");
+}
+
+/*
+ * Take the magic-packet filter back down on resume.
+ *
+ * This matters more than it looks.  filterAction FILTER_IN means "pass only
+ * frames that match", so a filter left armed while awake drops everything
+ * that is not a magic packet -- measured as 100% ping loss.  The ethertype
+ * and UDP filters are cleared on the resume path for the same reason.
+ */
+static void bes2600_clear_magic_filter(struct bes2600_vif *priv)
+{
+	struct bes2600_common *hw_priv = cw12xx_vifpriv_to_hwpriv(priv);
+
+	if (!bes2600_magic_wowlan)
+		return;
+
+	if (wsm_clear_magic_filter(hw_priv, priv->if_id))
+		wiphy_warn(hw_priv->hw->wiphy,
+			   "clearing magic filter (MIB 0x101C) failed\n");
 }
 
 static int __bes2600_wow_suspend(struct bes2600_vif *priv,
@@ -567,6 +593,7 @@ revert2:
 				priv->if_id);
 	wsm_set_ether_type_filter(hw_priv, &bes2600_ether_type_filter_off,
 				  priv->if_id);
+	bes2600_clear_magic_filter(priv);
 
 	if (priv->join_status == BES2600_JOIN_STATUS_AP)
 		WARN_ON(wsm_set_keepalive_filter(priv, false));
@@ -691,6 +718,10 @@ static int __bes2600_wow_resume(struct bes2600_vif *priv)
 	/* Remove ethernet frame type filter */
 	wsm_set_ether_type_filter(hw_priv, &bes2600_ether_type_filter_off,
 				  priv->if_id);
+
+	/* Remove the magic-packet filter, which would otherwise pass nothing
+	 * but magic packets now that the host is awake again. */
+	bes2600_clear_magic_filter(priv);
 
 	/* Remove ipv6 filer */
 #ifdef IPV6_FILTERING

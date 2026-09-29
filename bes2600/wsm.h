@@ -1799,75 +1799,125 @@ static inline int wsm_set_udp_port_filter(struct bes2600_common *hw_priv,
 		arg, size, if_id);
 }
 
-/* 4.34 SetMagicDataFrameFilter -- layout INFERRED, see below.
+/* 4.34 SetMagicDataFrameFilter -- layout recovered empirically, see below.
  *
  * The ST-Ericsson spec transcription every driver in this lineage inherited
  * stops writing structs at 4.33: mainline cw1200, the Silicon Labs wfx trees
  * and XRadio's XR819/XR829 all carry the 0x101C #define with nothing under it,
  * and XR829's header puts "This is the end of specification." directly below
- * it. So there is no authoritative struct to copy.
+ * it.  BES's own build of this driver does not implement it either -- see
+ * fw-analysis/vendor-cw1260, extracted with full DWARF from open-vela's
+ * prebuilt libnx_bestbsp_ap.a, which has no magic filter of any kind.  And
+ * nothing can be read out of the firmware image, because best2002_fw_sdio.bin
+ * is a patch image over a mask ROM that ships in no file and the MIB dispatch
+ * lives in that ROM.  So there was no struct anywhere to copy.
  *
- * What we do know: the later wfx/HIF generation of this same firmware family
- * does have one, recovered from the patch that deleted it as unused
- * ("staging: wfx: remove unused definitions from the hif API"):
+ * The layout below was therefore measured, on a PineTab2, on 2026-09-29.  An
+ * earlier inferred layout -- a count header followed by an entry, by analogy
+ * with the two implemented neighbours above -- was wrong, and wrong in a way
+ * nothing on the wire reveals: the firmware validates no payload length for
+ * any MIB in this family, so a malformed write is accepted in silence.
  *
- *	struct hif_mib_magic_data_frame_condition {
- *		u8 condition_idx; u8 offset; u8 magic_pattern_length;
- *		u8 reserved;      u8 magic_pattern[HIF_API_MAGIC_PATTERN_SIZE];
- *	} __packed;
+ * Two things make the measurement possible.
  *
- * That gives the semantics - an offset, a length and a byte pattern - but not
- * the wire format, because HIF is a later API that reshaped these filters.
- * The two filters BOTH generations implement prove it: for the UDP port filter
- * WSM sends hdr{nrFilters,reserved[3]} plus {filterAction,portType,udpPort}
- * with the port at offset 6, while HIF sends a flat
- * {condition_idx,protocol,which_port,reserved1,port_number,reserved2[2]} with
- * the port at offset 4. Same eight bytes, different arrangement.
+ * First, the firmware DOES validate MIB ids.  Unknown ids fail the confirm --
+ * 0x1FFF and 0x7FFF come back -22 at every length from 1 to 108 -- while
+ * 0x1017, 0x101A, 0x101B and 0x101C are accepted at every length.
+ * wsm_write_mib() does no id check of its own, so that is the firmware's own
+ * status word.  0x101C exists.
  *
- * So this follows the WSM convention of its two implemented neighbours above -
- * a count header followed by entries that begin with filterAction - and takes
- * offset/length/pattern from HIF for the rest.
+ * Second, these filters run while the chip is awake, so the live link is an
+ * oracle: arm FILTER_IN and ping.  A payload the firmware parses starves
+ * everything that does not match the pattern; a payload it cannot parse does
+ * nothing at all.  Validate the oracle on 0x101A first, whose layout is known
+ * from the vendor DWARF -- FILTER_IN on ethertype ARP gives 100% loss, on
+ * IPv4 50%, filter off 0%.  Then, for 0x101C (ping loss to the gateway over
+ * wlan0, filter cleared between every trial, each result reproduced over two
+ * or more rounds because this link is flaky enough that single readings lie):
  *
- * TESTED 2026-09-29 ON A PINETAB2, AND IT DOES NOT WORK.  Armed and
- * associated, suspended deep with a 300 s RTC backstop; a unicast magic
- * packet 35 s in did nothing and the device slept the full 301 s.  The write
- * drew no error, which is exactly the hazard: the firmware accepts any
- * payload length for 0x101C, so being accepted says nothing.
+ *	02 00 06 00 aaaa03000000	LLC/SNAP at 0		   0%  match
+ *	02 00 06 00 aaaa03000001	one byte wrong		 100%  no match
+ *	02 00 08 00 aaaa030000000800	SNAP+ethertype IPv4	   0%  match
+ *	02 00 08 00 aaaa030000000806	SNAP+ethertype ARP	 100%  no match
+ *	02 18 04 00 c0a801a5		dest IP ours  at 0x18	   0%  match
+ *	02 18 04 00 0a0a0a0a		dest IP wrong at 0x18	 100%  no match
+ *	02 11 01 00 01			IP proto ICMP at 0x11	   0%  match
+ *	02 11 01 00 06			IP proto TCP  at 0x11	 100%  no match
+ *	deadbeef			garbage			   0%  not parsed
+ *	01000000 02 00 06 00 ...	WITH a count header	   0%  not parsed
  *
- * What that rules out is this arrangement, not the MIB.  Still unknown, and
- * not reachable from the module parameters: whether byte 0 is filterAction
- * (WSM style) or condition_idx (HIF style), whether there is a count header
- * at all, and what the firmware expects the pattern to match against.  Do
- * not enable bes2600_magic_wowlan expecting wake-on-LAN to work.
+ * Reproduce with the "wx" command on the mib_probe debugfs file and the
+ * paired-arm harness in tools/mib-filter-probe.sh.
+ *
+ * What that establishes:
+ *
+ *   - there is NO nrFilters count header.  Unlike 0x101A and 0x101B, the
+ *     struct goes straight on the wire.  Prefixing a header makes the
+ *     firmware ignore the write entirely, which is what made the first
+ *     attempt look like the MIB was unimplemented.
+ *
+ *   - offset counts from the first byte of the LLC/SNAP header, i.e. the
+ *     802.11 header is already stripped.  SNAP is eight bytes, so for an
+ *     IPv4 frame:
+ *
+ *	   0x00  LLC/SNAP	0x08  IP version/IHL	0x11  IP protocol
+ *	   0x06  ethertype	0x14  IP source		0x18  IP destination
+ *				0x1C  L4 header		0x24  UDP payload
+ *
+ *     A wake-on-LAN magic packet carried in UDP with no IP options therefore
+ *     begins at 0x24, which is BES2600_MAGIC_OFFSET_UDP below.
+ *
+ *   - the pattern is matched byte-exact, and magicPatternLength = 0 disables
+ *     the filter.
+ *
+ * Caveat: filterAction 1 does NOT invert.  FILTER_OUT over a pattern that
+ * matches still passed all traffic across four trials, so either it is
+ * unimplemented for this MIB or it is encoded differently.  Only
+ * WSM_FILTER_ACTION_FILTER_IN has an observable effect, and that is the one
+ * WoWLAN needs.
+ *
+ * Caveat: all of the above proves the firmware parses and matches this struct
+ * while awake.  Whether a match also wakes the host from suspend is a
+ * separate property.
  */
-struct wsm_magic_filter_hdr {
-	u8 nrFilters;		/* Up to WSM_MAX_FILTER_ELEMENTS */
-	u8 reserved[3];
-} __packed;
+
+/* Offset of a wake-on-LAN magic packet carried in UDP, counted from the first
+ * LLC/SNAP byte: 8 (SNAP) + 20 (IPv4, no options) + 8 (UDP). */
+#define BES2600_MAGIC_OFFSET_UDP	(8 + 20 + 8)
 
 struct wsm_magic_filter {
-	u8 filterAction;	/* WSM_FILTER_ACTION_XXX */
-	u8 offset;		/* where in the frame the pattern must sit */
-	u8 magicPatternLength;	/* bytes of magicPattern[] that matter */
+	u8 filterAction;	/* WSM_FILTER_ACTION_FILTER_IN; see caveat */
+	u8 offset;		/* from the first LLC/SNAP byte */
+	u8 magicPatternLength;	/* bytes of magicPattern[] that matter, 0 = off */
 	u8 reserved;
 	u8 magicPattern[WSM_MAGIC_PATTERN_MAX];
 } __packed;
 
-/* A filter is sent as the header plus exactly the pattern bytes in use, the
- * same way the ethertype and UDP filters send only nrFilters entries. */
+/* Sent as the fixed four bytes plus exactly the pattern bytes in use.  There
+ * is no count header -- adding one is what made the first attempt fail. */
 static inline int wsm_set_magic_filter(struct bes2600_common *hw_priv,
-				struct wsm_magic_filter_hdr *arg,
+				struct wsm_magic_filter *arg,
 				size_t pattern_len,
 				int if_id)
 {
-	size_t size = sizeof(struct wsm_magic_filter_hdr);
+	size_t size = offsetof(struct wsm_magic_filter, magicPattern) +
+		pattern_len;
 
-	if (arg->nrFilters)
-		size += offsetof(struct wsm_magic_filter, magicPattern) +
-			pattern_len;
+	if (WARN_ON(pattern_len > WSM_MAGIC_PATTERN_MAX))
+		return -EINVAL;
 
 	return wsm_write_mib(hw_priv, WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER,
 		arg, size, if_id);
+}
+
+/* Turn the filter off again: the fixed four bytes with a zero pattern length. */
+static inline int wsm_clear_magic_filter(struct bes2600_common *hw_priv,
+				int if_id)
+{
+	struct wsm_magic_filter arg = { };
+
+	return wsm_write_mib(hw_priv, WSM_MIB_ID_SET_MAGIC_DATAFRAME_FILTER,
+		&arg, offsetof(struct wsm_magic_filter, magicPattern), if_id);
 }
 
 /* Undocumented MIBs: */
