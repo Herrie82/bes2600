@@ -635,7 +635,7 @@ static struct ieee80211_hw *bes2600_init_common(size_t hw_priv_data_len)
 		bes2600_wowlan_support_magic.flags |= WIPHY_WOWLAN_MAGIC_PKT;
 		hw->wiphy->wowlan = &bes2600_wowlan_support_magic;
 		wiphy_info(hw->wiphy,
-			   "magic-packet wowlan enabled; MIB 0x101C layout is inferred, not documented\n");
+			   "magic-packet wowlan enabled; MIB 0x101C layout measured, host wake unverified\n");
 	} else {
 		hw->wiphy->wowlan = &bes2600_wowlan_support;
 	}
