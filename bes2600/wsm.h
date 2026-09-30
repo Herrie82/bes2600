@@ -1490,11 +1490,31 @@ struct wsm_counters_table {
 	__le32 countRxMgmtCCMPReplays;
 };
 
+/*
+ * Read the CountersTable MIB (4.20).
+ *
+ * The firmware returns fewer counters than this struct describes -- a
+ * BES2600 reports 60 bytes, the first 15 of the 22 fields -- and
+ * wsm_read_mib_confirm() copies only what comes back.  Callers used to pass
+ * an uninitialised stack struct, so the fields past the reported length were
+ * leftover stack memory, which is where the impossible values in the debugfs
+ * "counters" file came from (RtsFailures -32768, RxFramesSuccess
+ * -479065672, ...).  Zero it first, and tell the caller how many bytes are
+ * real.
+ */
+static inline int wsm_get_counters_table_sized(struct bes2600_common *hw_priv,
+					       struct wsm_counters_table *arg,
+					       size_t *filled)
+{
+	memset(arg, 0, sizeof(*arg));
+	return wsm_read_mib_sized(hw_priv, WSM_MIB_ID_COUNTERS_TABLE,
+				  arg, sizeof(*arg), filled);
+}
+
 static inline int wsm_get_counters_table(struct bes2600_common *hw_priv,
 					 struct wsm_counters_table *arg)
 {
-	return wsm_read_mib(hw_priv, WSM_MIB_ID_COUNTERS_TABLE,
-			arg, sizeof(*arg));
+	return wsm_get_counters_table_sized(hw_priv, arg, NULL);
 }
 
 static inline int wsm_get_station_id(struct bes2600_common *hw_priv, u8 *mac)

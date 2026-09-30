@@ -238,15 +238,34 @@ static int bes2600_counters_show(struct seq_file *seq, void *v)
 	int ret;
 	struct bes2600_common *hw_priv = seq->private;
 	struct wsm_counters_table counters;
+	size_t filled = 0;
 
-	ret = wsm_get_counters_table(hw_priv, &counters);
+	ret = wsm_get_counters_table_sized(hw_priv, &counters, &filled);
 	if (ret)
 		return ret;
 
+	/*
+	 * Say how much of the table is real, and print only those counters.
+	 * On a BES2600 the firmware reports 15 of the 22 fields and every one
+	 * of them reads zero -- it does not maintain this table -- so the
+	 * honest output is "zero" for the first 15 and "n/a" for the rest.
+	 */
+	seq_printf(seq, "# firmware reported %zu of %zu bytes (%zu of %zu counters)\n",
+		   filled, sizeof(counters), filled / sizeof(__le32),
+		   sizeof(counters) / sizeof(__le32));
+	if (filled && !memchr_inv(&counters, 0, filled))
+		seq_puts(seq, "# every reported counter is zero: this firmware does not appear to maintain the table\n");
+
 #define CAT_STR(x, y) x ## y
-#define PUT_COUNTER(tab, name) \
-	seq_printf(seq, "%s:" tab "%d\n", #name, \
-		__le32_to_cpu(counters.CAT_STR(count, name)))
+#define PUT_COUNTER(tab, name)						\
+	do {								\
+		if (offsetofend(struct wsm_counters_table,		\
+				CAT_STR(count, name)) <= filled)	\
+			seq_printf(seq, "%s:" tab "%u\n", #name,	\
+				__le32_to_cpu(counters.CAT_STR(count, name))); \
+		else							\
+			seq_printf(seq, "%s:" tab "n/a\n", #name);	\
+	} while (0)
 
 	PUT_COUNTER("\t\t", PlcpErrors);
 	PUT_COUNTER("\t\t", FcsErrors);
