@@ -69,6 +69,8 @@ u64 bes2600_prepare_multicast(struct ieee80211_hw *hw,
 			     struct netdev_hw_addr_list *mc_list);
 
 int bes2600_set_pm(struct bes2600_vif *priv, const struct wsm_set_pm *arg);
+extern bool bes2600_rx_block_ack;
+u8 bes2600_rx_ba_mask(struct bes2600_common *hw_priv);
 bool bes2600_set_pm_will_send(struct bes2600_vif *priv,
 			      const struct wsm_set_pm *arg);
 

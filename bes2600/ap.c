@@ -800,9 +800,10 @@ void bes2600_bss_info_changed(struct ieee80211_hw *dev,
 				    priv->join_dtim_period, 0, priv->if_id));
 			if (priv->htcap) {
 				wsm_lock_tx(hw_priv);
-				/* Statically enabling block ack for TX/RX */
+				/* Statically enabling block ack for TX/RX
+				 * (RX subject to rx_block_ack, see sta.c) */
 				WARN_ON(wsm_set_block_ack_policy(hw_priv,
-					hw_priv->ba_tid_mask, hw_priv->ba_tid_mask,
+					hw_priv->ba_tid_mask, bes2600_rx_ba_mask(hw_priv),
 						priv->if_id));
 				wsm_unlock_tx(hw_priv);
 			}
@@ -1240,6 +1241,10 @@ int bes2600_ampdu_action(struct ieee80211_hw *hw,
 
 	switch (params->action) {
 	case IEEE80211_AMPDU_RX_START:
+		/* Decline when receive Block Ack is turned off, so mac80211
+		 * does not build a reorder buffer the firmware isn't feeding. */
+		ret = bes2600_rx_block_ack ? 0 : -EOPNOTSUPP;
+		break;
 	case IEEE80211_AMPDU_RX_STOP:
 		/* Just return OK to mac80211 */
 		ret = 0;

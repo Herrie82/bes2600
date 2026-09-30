@@ -79,6 +79,34 @@
  * than as a refusal -- and one refusal was seen with the probe off too.
  * 5GHz is unaffected either way.
  */
+/*
+ * Receive-side Block Ack (A-MPDU aggregation of frames the AP sends us).
+ *
+ * The firmware negotiates Block Ack itself, but reordering of received
+ * aggregates happens on the host, in mac80211, which bes2600_ampdu_action()
+ * simply agrees to.  Default on, which is what the driver has always done.
+ *
+ * Off makes the firmware refuse receive aggregation (RX TID mask 0 in every
+ * Block Ack policy the station code writes: at JOIN, at unjoin, and at
+ * association) and makes bes2600_ampdu_action() decline RX sessions, so
+ * mac80211 does not set up a reorder buffer either.  Added to test one
+ * specific failure on a PineTab2: a one-way unicast stream to the tablet
+ * delivers its first packet and then nothing, while broadcast and two-way
+ * unicast (ping) keep working.  A receive Block Ack session that the
+ * firmware and mac80211 disagree about is one mechanism that produces
+ * exactly that.  Takes effect at the next association.
+ */
+bool bes2600_rx_block_ack = true;
+module_param_named(rx_block_ack, bes2600_rx_block_ack, bool, 0644);
+MODULE_PARM_DESC(rx_block_ack,
+	"accept receive-side Block Ack/A-MPDU from the AP (default 1); 0 refuses it, from the next association");
+
+u8 bes2600_rx_ba_mask(struct bes2600_common *hw_priv)
+{
+	return bes2600_rx_block_ack ? hw_priv->ba_tid_mask :
+		BES2600_RX_BLOCK_ACK_DISABLED_FOR_ALL_TID;
+}
+
 static bool join_probe;
 module_param(join_probe, bool, 0644);
 MODULE_PARM_DESC(join_probe,
@@ -2565,7 +2593,7 @@ void bes2600_join_work(struct work_struct *work)
 
 		//WARN_ON(wsm_reset(hw_priv, &reset, priv->if_id));
 		WARN_ON(wsm_set_block_ack_policy(hw_priv,
-			0, hw_priv->ba_tid_mask, priv->if_id));
+			0, bes2600_rx_ba_mask(hw_priv), priv->if_id));
 		spin_lock_bh(&hw_priv->ba_lock);
 		hw_priv->ba_ena = false;
 		hw_priv->ba_cnt = 0;
@@ -2845,7 +2873,7 @@ void bes2600_unjoin_work(struct work_struct *work)
 		cancel_work_sync(&hw_priv->event_handler);
 		cancel_delayed_work_sync(&priv->connection_loss_work);
 		WARN_ON(wsm_set_block_ack_policy(hw_priv,
-			0, hw_priv->ba_tid_mask, priv->if_id));
+			0, bes2600_rx_ba_mask(hw_priv), priv->if_id));
 		priv->disable_beacon_filter = false;
 		bes2600_update_filtering(priv);
 		priv->setbssparams_done = false;
