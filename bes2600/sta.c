@@ -55,13 +55,34 @@
  *
  * Everything the probe would confirm -- BSSID, SSID, beacon interval, DTIM --
  * is already in the JOIN from the scan results, so it is worth being able to
- * turn off.  Left on by default; writable at runtime so both settings can be
- * compared on one boot without reloading the driver.
+ * turn off.  Writable at runtime so both settings can be compared on one boot
+ * without reloading the driver.
+ *
+ * OFF by default since an interleaved A/B on a PineTab2, 2.4GHz, same boot,
+ * alternating the setting connect by connect so uptime drift hits both arms:
+ *
+ *	                          probe on    probe off
+ *	JOIN refusals               26          3
+ *	connects refused 3/3         7/28        0/28     (Fisher p ~ 0.005)
+ *	associated in 35 s          12/16       15/16     (second run)
+ *
+ * Every connect lost with the probe on was one where all three of
+ * mac80211's authentication tries were refused -- the "sticky" refusal the
+ * JOIN history in this file describes -- and with the probe off that
+ * pattern did not occur once.
+ *
+ * It narrows the problem rather than removing it.  The chip goes through
+ * windows where it cannot hear the AP on 2.4GHz: back-to-back scans missed a
+ * -52 dBm AP six times running while still seeing other 2.4GHz networks,
+ * then found it every time after.  A JOIN that lands in such a window still
+ * fails with the probe off -- as "waiting for beacon" in mac80211 rather
+ * than as a refusal -- and one refusal was seen with the probe off too.
+ * 5GHz is unaffected either way.
  */
-static bool join_probe = true;
+static bool join_probe;
 module_param(join_probe, bool, 0644);
 MODULE_PARM_DESC(join_probe,
-	"send a probe request as part of JOIN (default 1); 0 joins using the scan results alone");
+	"send a probe request as part of JOIN (default 0); 1 makes the firmware probe the AP first, which on 2.4GHz is what gets refused");
 
 /*
  * Runtime gates for the JOIN-refusal hunt.
