@@ -47,42 +47,50 @@
 /*
  * JOIN carries probeForJoin, which makes the firmware send a probe request and
  * wait for the response before it will consider itself synchronised with the
- * AP.  That is an over-the-air dependency inside a command whose failure costs
- * the whole association, and the refusals seen on a PineTab2 track signal
- * strength: three in a single run at -55 dBm, none at all across fifteen
- * associations at -35 to -39 dBm, with every field of the request correct
- * either time.
+ * AP.  That puts an over-the-air exchange inside a command whose failure costs
+ * the whole association: if the response is lost, the firmware answers the
+ * JOIN with status 1 about 2 s later and mac80211's authentication attempt
+ * fails with it.
  *
  * Everything the probe would confirm -- BSSID, SSID, beacon interval, DTIM --
- * is already in the JOIN from the scan results, so it is worth being able to
- * turn off.  Writable at runtime so both settings can be compared on one boot
- * without reloading the driver.
+ * is already in the JOIN from the scan results, so the probe buys nothing the
+ * host does not already know.  Writable at runtime so both settings can be
+ * compared on one boot without reloading the driver.
  *
- * OFF by default since an interleaved A/B on a PineTab2, 2.4GHz, same boot,
- * alternating the setting connect by connect so uptime drift hits both arms:
+ * What the rest of the family does:
+ *   - mainline cw1200 always sets probe_for_join = 1;
+ *   - wfx (the Silicon Labs successor) sets it unless the channel is
+ *     IEEE80211_CHAN_NO_IR, where the device may not transmit first;
+ *   - BES's own build of this driver (open-vela vendor_bes, cw1260/sta.c)
+ *     always sets it to 1.
+ * None of them retries a JOIN that fails this way; they rely on mac80211's
+ * authentication retries, which are only ~170 ms apart and so land in the
+ * same bad stretch.
  *
- *	                          probe on    probe off
- *	JOIN refusals               26          3
- *	connects refused 3/3         7/28        0/28     (Fisher p ~ 0.005)
- *	associated in 35 s          12/16       15/16     (second run)
+ * OFF by default.  On a PineTab2 at 2.4GHz, interleaved A/B on one boot:
  *
- * Every connect lost with the probe on was one where all three of
- * mac80211's authentication tries were refused -- the "sticky" refusal the
- * JOIN history in this file describes -- and with the probe off that
- * pattern did not occur once.
+ *	                               probe on    probe off
+ *	with a 2.4GHz interferer nearby
+ *	  JOIN refusals                  26          3
+ *	  connects refused 3/3            7/28        0/28
+ *	interferer switched off
+ *	  JOIN refusals                   0           0
+ *	  associated first try           28/28       28/28
  *
- * It narrows the problem rather than removing it.  The chip goes through
- * windows where it cannot hear the AP on 2.4GHz: back-to-back scans missed a
- * -52 dBm AP six times running while still seeing other 2.4GHz networks,
- * then found it every time after.  A JOIN that lands in such a window still
- * fails with the probe off -- as "waiting for beacon" in mac80211 rather
- * than as a refusal -- and one refusal was seen with the probe off too.
- * 5GHz is unaffected either way.
+ * The interferer was a PC next to the tablet running Bluetooth discovery
+ * 40 s of every minute; while it ran the tablet missed ~90% of beacons on
+ * channels 6 and 11 alike.  So the refusals are lost probe responses, not a
+ * chip fault, and with a clean channel the setting makes no difference.
+ * It stays off because real-world 2.4GHz is often not clean (headsets,
+ * laptops, microwave ovens), and without the probe a JOIN no longer needs
+ * one particular frame to survive.  When it is turned on, it is still
+ * suppressed on NO_IR channels, as wfx does, since transmitting there first
+ * is not allowed.
  */
 static bool join_probe;
 module_param(join_probe, bool, 0644);
 MODULE_PARM_DESC(join_probe,
-	"send a probe request as part of JOIN (default 0); 1 makes the firmware probe the AP first, which on 2.4GHz is what gets refused");
+	"send a probe request as part of JOIN (default 0; never on NO_IR channels); 1 makes the firmware wait for the AP's probe response, and the JOIN fails if it is lost");
 
 /*
  * Receive-side Block Ack (A-MPDU aggregation of frames the AP sends us).
@@ -94,12 +102,16 @@ MODULE_PARM_DESC(join_probe,
  * Off makes the firmware refuse receive aggregation (RX TID mask 0 in every
  * Block Ack policy the station code writes: at JOIN, at unjoin, and at
  * association) and makes bes2600_ampdu_action() decline RX sessions, so
- * mac80211 does not set up a reorder buffer either.  Added to test one
- * specific failure on a PineTab2: a one-way unicast stream to the tablet
- * delivers its first packet and then nothing, while broadcast and two-way
- * unicast (ping) keep working.  A receive Block Ack session that the
- * firmware and mac80211 disagree about is one mechanism that produces
- * exactly that.  Takes effect at the next association.
+ * mac80211 does not set up a reorder buffer either.  Takes effect at the
+ * next association.
+ *
+ * Added to test a PineTab2 symptom -- a one-way unicast stream delivered
+ * its first packet and then nothing -- which turned out not to be Block Ack
+ * at all: the router's NAT acceleration was inserting an 802.1Q tag (VLAN
+ * 4095) into forwarded client-to-client frames, and the IP layer dropped
+ * them as PACKET_OTHERHOST.  Kept as a switch for isolating receive
+ * aggregation problems; if frames reach mac80211 but not a socket, check the
+ * skb:kfree_skb tracepoint's drop reason first.
  */
 bool bes2600_rx_block_ack = true;
 module_param_named(rx_block_ack, bes2600_rx_block_ack, bool, 0644);
@@ -2576,6 +2588,8 @@ void bes2600_join_work(struct work_struct *work)
 
 		hw_priv->is_go_thru_go_neg = false;
 		join.channelNumber = hw_priv->channel->hw_value;
+		if (hw_priv->channel->flags & IEEE80211_CHAN_NO_IR)
+			join.probeForJoin = 0;
 
 		/* basicRateSet will be updated after association.
 		Currently these values are hardcoded */
