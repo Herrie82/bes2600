@@ -471,14 +471,17 @@ static void bes2600_set_magic_filter(struct bes2600_vif *priv)
 		memcpy(arg.magicPattern + 6 + i * ETH_ALEN,
 		       priv->vif->addr, ETH_ALEN);
 
-	bes_devel("magic filter: offset %d, %d MAC copies, %d pattern bytes\n",
-		  arg.offset, repeats, len);
+	/* Once per suspend. */
+	bes_info("magic filter: offset %d, %d MAC copies, %d pattern bytes, mac %pM\n",
+		 arg.offset, repeats, len, priv->vif->addr);
 
 	/* A failure here is worth seeing, but it must not stop the suspend:
 	 * the RX filters above already quiet the chip. */
 	if (wsm_set_magic_filter(hw_priv, &arg, len, priv->if_id))
 		wiphy_warn(hw_priv->hw->wiphy,
 			   "magic filter (MIB 0x101C) rejected\n");
+	else
+		bes_info("magic filter accepted by firmware\n");
 }
 
 /*

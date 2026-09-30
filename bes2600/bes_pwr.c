@@ -1423,6 +1423,14 @@ void bes2600_pwr_suspend_end(struct bes2600_common *hw_priv)
 	constant_event_exist = bes2600_update_power_delay_events(&hw_priv->bes_power, &max_timeout);
 	spin_unlock_irqrestore(&hw_priv->bes_power.pwr_lock, flags);
 
+	/* Once per system suspend, so safe to log at info.  Do NOT log inside
+	 * bes2600_pwr_device_enter_lp_mode() itself: that runs on every
+	 * idle<->busy transition of the power state machine, and this driver
+	 * is already known to lose associations when the log gets busy. */
+	bes_info("suspend_end: const_event=%d max_timeout=%lu -> device LP %s\n",
+		 constant_event_exist, max_timeout,
+		 (!constant_event_exist && max_timeout == 0) ? "ENTERED" : "SKIPPED");
+
 	mutex_lock(&hw_priv->bes_power.pwr_mutex);
 	if(!constant_event_exist && max_timeout == 0)
 		bes2600_pwr_device_enter_lp_mode(hw_priv);
@@ -1435,6 +1443,8 @@ void bes2600_pwr_resume_start(struct bes2600_common *hw_priv)
 	if(atomic_read(&hw_priv->bes_power.dev_state) == 0) {
 		return;
 	}
+
+        bes_info("resume_start: waking the chip\n");
 
         mutex_lock(&hw_priv->bes_power.pwr_mutex);
         hw_priv->bes_power.sys_resume_task = current;
