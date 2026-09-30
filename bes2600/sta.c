@@ -79,13 +79,19 @@
  *
  * The interferer was a PC next to the tablet running Bluetooth discovery
  * 40 s of every minute; while it ran the tablet missed ~90% of beacons on
- * channels 6 and 11 alike.  So the refusals are lost probe responses, not a
- * chip fault, and with a clean channel the setting makes no difference.
- * It stays off because real-world 2.4GHz is often not clean (headsets,
- * laptops, microwave ovens), and without the probe a JOIN no longer needs
- * one particular frame to survive.  When it is turned on, it is still
- * suppressed on NO_IR channels, as wfx does, since transmitting there first
- * is not allowed.
+ * channels 6 and 11 alike.  So the refusals come from frames lost to
+ * interference, not from a chip fault, and with a clean channel the setting
+ * makes no difference.
+ *
+ * Turning the probe off does not make a JOIN robust against interference
+ * that strong.  A later run with the same interferer and the probe off still
+ * had 7 of 20 connects refused, every one of them while the PC's discovery
+ * was running and none in its quiet window: the firmware evidently needs
+ * other frames from the AP (most likely a beacon to synchronise to) before
+ * it completes a JOIN.  The probe only adds one more frame that can be lost,
+ * so it stays off, but expect little from that.  When it is turned on, it
+ * is still suppressed on NO_IR channels, as wfx does, since transmitting
+ * there first is not allowed.
  */
 static bool join_probe;
 module_param(join_probe, bool, 0644);
