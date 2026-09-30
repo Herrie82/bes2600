@@ -27,6 +27,28 @@
 
 #define BES2600_INVALID_RATE_ID (0xFF)
 
+/*
+ * rx_trace - one log line per received unicast data frame.
+ *
+ * A one-way unicast stream to a PineTab2 delivers its first packet and then
+ * nothing, while broadcast and ping keep working.  The question this answers
+ * is where the rest go: if every frame of the stream shows up here, the
+ * firmware delivered them and mac80211 is discarding them (replay check,
+ * reorder window); if only the first shows up, they are lost in the firmware
+ * or on the air.  Each line carries what is needed to tell those apart -- the
+ * sequence number, TID, retry bit, whether the firmware marked the frame as
+ * part of an aggregate, how it reported the encryption, and the CCMP packet
+ * number when the header is still in the frame.
+ *
+ * Off by default, and meant to be switched on only around a small test: this
+ * driver is known to lose associations when the log gets busy, so it must not
+ * be left on under real traffic.
+ */
+static bool rx_trace;
+module_param(rx_trace, bool, 0644);
+MODULE_PARM_DESC(rx_trace,
+	"log one line per received unicast data frame (diagnostic, default 0; do not leave on under load)");
+
 #ifdef CONFIG_BES2600_TESTMODE
 #include "bes_nl80211_testmode_msg.h"
 #endif /* CONFIG_BES2600_TESTMODE */
@@ -1896,6 +1918,7 @@ void bes2600_rx_cb(struct bes2600_vif *priv,
 	struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)skb->data;
 	struct bes2600_link_entry *entry = NULL;
 	bool early_data = false;
+	bool trace_this = false;
 	size_t hdrlen = 0;
 	u64 tsf;
 	do {
@@ -1916,6 +1939,46 @@ void bes2600_rx_cb(struct bes2600_vif *priv,
 		/* for unicast, wakeup device directly */
 		bes2600_pwr_set_busy_event_with_timeout_async(
 	 			hw_priv, BES_PWR_LOCK_ON_RX, BES_PWR_EVENT_RX_TIMEOUT);
+	}
+
+	if (unlikely(rx_trace) &&
+	    skb->len >= sizeof(struct ieee80211_hdr_3addr) &&
+	    ieee80211_is_data(frame->frame_control) &&
+	    !is_multicast_ether_addr(ieee80211_get_DA(frame))) {
+		__le16 fc = frame->frame_control;
+		u16 sc = le16_to_cpu(frame->seq_ctrl);
+		size_t hl = ieee80211_hdrlen(fc);
+		u32 enc = WSM_RX_STATUS_ENCRYPTION(arg->flags);
+		int tid = -1;
+		u64 pn = 0;
+		bool have_pn = false;
+
+		if (ieee80211_is_data_qos(fc) && skb->len >= hl)
+			tid = ieee80211_get_tid(frame);
+
+		/* The CCMP header is still in the frame unless the firmware
+		 * reported it as decrypted-and-stripped. */
+		if (enc == WSM_RX_STATUS_AES && skb->len >= hl + 8) {
+			const u8 *c = skb->data + hl;
+
+			pn = (u64)c[0] | ((u64)c[1] << 8) | ((u64)c[4] << 16) |
+			     ((u64)c[5] << 24) | ((u64)c[6] << 32) |
+			     ((u64)c[7] << 40);
+			have_pn = true;
+		}
+
+		trace_this = true;
+		if (have_pn)
+			bes_info("rxtrace: sn=%u frag=%u tid=%d retry=%d len=%u status=%u enc=%u agg=%d pn=%llu\n",
+				 sc >> 4, sc & 0xf, tid, ieee80211_has_retry(fc),
+				 skb->len, arg->status, enc,
+				 !!(arg->flags & WSM_RX_STATUS_AGGREGATE),
+				 (unsigned long long)pn);
+		else
+			bes_info("rxtrace: sn=%u frag=%u tid=%d retry=%d len=%u status=%u enc=%u agg=%d pn=n/a\n",
+				 sc >> 4, sc & 0xf, tid, ieee80211_has_retry(fc),
+				 skb->len, arg->status, enc,
+				 !!(arg->flags & WSM_RX_STATUS_AGGREGATE));
 	}
 
 	/*
@@ -2254,6 +2317,9 @@ void bes2600_rx_cb(struct bes2600_vif *priv,
 
 drop:
 	/* TODO: update failure counters */
+	if (unlikely(trace_this))
+		bes_info("rxtrace: ^ DROPPED in the driver (status=%u)\n",
+			 arg->status);
 	return;
 }
 

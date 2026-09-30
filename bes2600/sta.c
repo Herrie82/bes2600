@@ -79,6 +79,11 @@
  * than as a refusal -- and one refusal was seen with the probe off too.
  * 5GHz is unaffected either way.
  */
+static bool join_probe;
+module_param(join_probe, bool, 0644);
+MODULE_PARM_DESC(join_probe,
+	"send a probe request as part of JOIN (default 0); 1 makes the firmware probe the AP first, which on 2.4GHz is what gets refused");
+
 /*
  * Receive-side Block Ack (A-MPDU aggregation of frames the AP sends us).
  *
@@ -107,10 +112,24 @@ u8 bes2600_rx_ba_mask(struct bes2600_common *hw_priv)
 		BES2600_RX_BLOCK_ACK_DISABLED_FOR_ALL_TID;
 }
 
-static bool join_probe;
-module_param(join_probe, bool, 0644);
-MODULE_PARM_DESC(join_probe,
-	"send a probe request as part of JOIN (default 0); 1 makes the firmware probe the AP first, which on 2.4GHz is what gets refused");
+/*
+ * rx_filter_open - have the firmware pass up everything it receives.
+ *
+ * bes2600_configure_filter() hardcodes rx_filter.promiscuous to 0, so putting
+ * the interface in promiscuous mode from userspace never reaches the firmware.
+ * This forces promiscuous on and BSSID filtering off in every filter update,
+ * to test whether the firmware's receive filter is what discards a one-way
+ * unicast stream after its first frame.  It is applied whenever filtering is
+ * updated -- at JOIN/association, or immediately by toggling promiscuous mode
+ * on the interface, which makes mac80211 call configure_filter.
+ *
+ * Diagnostic only, default off: it makes the host process every frame on the
+ * channel.
+ */
+static bool rx_filter_open;
+module_param(rx_filter_open, bool, 0644);
+MODULE_PARM_DESC(rx_filter_open,
+	"force the firmware RX filter open: promiscuous on, BSSID filtering off (diagnostic, default 0)");
 
 /*
  * Runtime gates for the JOIN-refusal hunt.
@@ -918,7 +937,18 @@ void bes2600_update_filtering(struct bes2600_vif *priv)
 	if (priv->vif && priv->vif->p2p)
 		bssid_filtering = false;
 
-	ret = wsm_set_rx_filter(hw_priv, &priv->rx_filter, priv->if_id);
+	if (unlikely(rx_filter_open)) {
+		/* Diagnostic: ask the firmware for everything.  See the
+		 * parameter's comment. */
+		struct wsm_rx_filter open = priv->rx_filter;
+
+		open.promiscuous = 1;
+		open.bssid = 1;
+		bssid_filtering = false;
+		ret = wsm_set_rx_filter(hw_priv, &open, priv->if_id);
+	} else {
+		ret = wsm_set_rx_filter(hw_priv, &priv->rx_filter, priv->if_id);
+	}
 	if (!ret && !ap_mode) {
 		if (priv->vif) {
 			if (priv->vif->p2p || NL80211_IFTYPE_STATION != priv->vif->type)
