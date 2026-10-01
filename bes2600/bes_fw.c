@@ -25,6 +25,12 @@
 
 int bes2600_load_firmware_sdio(struct sbus_ops *ops, struct sbus_priv *priv);
 
+/* ROM-dump capture: see the hook in bes_read_dpd_data().  Off by default. */
+static bool bes2600_dpd_capture;
+module_param_named(dpd_capture, bes2600_dpd_capture, bool, 0644);
+MODULE_PARM_DESC(dpd_capture,
+	"write the DPD read-back to /data/romchunk.bin (use with a ROM-dump boot image)");
+
 struct platform_fw_t {
 	struct delayed_work work_data;
 	struct sdio_func *func;
@@ -913,6 +919,27 @@ static int bes_read_dpd_data(struct platform_fw_t *fw_data)
 		bes_err("read dpd data failed:%d\n", ret);
 		bes2600_chrdev_free_dpd_data();
 		return -1;
+	}
+
+	/*
+	 * ROM-dump capture hook.  When the boot firmware is patched to copy a
+	 * window of mask ROM into the DPD buffer (0x2008c000) in place of the
+	 * computed DPD table, this writes exactly what the host read back to a
+	 * file so it can be reassembled off-device.  Default off; set
+	 * bes2600_dpd_capture=1 only together with a ROM-dump boot image.
+	 */
+	if (bes2600_dpd_capture) {
+		struct file *cf = filp_open("/data/romchunk.bin",
+					    O_TRUNC | O_CREAT | O_RDWR, 0600);
+		if (!IS_ERR(cf)) {
+			loff_t pos = 0;
+			kernel_write(cf, dpd_buf, dpd_size, &pos);
+			filp_close(cf, NULL);
+			bes_info("dpd_capture: wrote %u bytes to /data/romchunk.bin\n",
+				 dpd_size);
+		} else {
+			bes_err("dpd_capture: open /data/romchunk.bin failed\n");
+		}
 	}
 
 	/* update dpd data */
